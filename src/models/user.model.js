@@ -24,6 +24,21 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    role: {
+      type: String,
+      enum: ["owner", "manager", "admin", "user"],
+      default: "user",
+    },
+
+    workSpaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Workspace",
+    },
+
+    team: {
+      type: String,
+      default: "Default team",
+    },
     password: {
       type: String,
       required: true,
@@ -39,16 +54,15 @@ const userSchema = new mongoose.Schema(
 
     verificationToken: String,
     verificationTokenExpire: Date,
-  
 
-  resetToken: {
-  type: String,
-},
+    resetToken: {
+      type: String,
+    },
 
-resetTokenExpire: {
-  type: Date,
-},
-},
+    resetTokenExpire: {
+      type: Date,
+    },
+  },
   {
     timestamps: true,
   },
