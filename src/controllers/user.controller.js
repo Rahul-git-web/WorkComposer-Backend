@@ -1,7 +1,11 @@
 import User from "../models/user.model.js";
 import Invite from "../models/invite.model.js";
+import EmailChange from "../models/emailChange.model.js";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { Parser } from "json2csv";
+import sendEmail from "../utils/sendEmail.js";
+import inviteEmailTemplate from "../templates/inviteEmailTemplate.js";
 
 export const getUsers = async (req, res) => {
   try {
@@ -35,7 +39,32 @@ export const getUsers = async (req, res) => {
       }).select("-password");
     }
 
-    res.status(200).json(users);
+    const userWithStats = await Promise.all(
+      users.map(async (user) => {
+        if (user.role !== "manager") {
+          return user;
+        }
+
+        // USERS COUNT
+        const managedUsers = await User.countDocuments({
+          manager: user._id,
+        });
+
+        // TEAMS COUNT
+        const managedTeams = await User.distinct("team", {
+          manager: user._id,
+          team: { $ne: null },
+        });
+
+        return {
+          ...user.toObject(),
+          managedUsersCount: managedUsers,
+          managedTeamsCount: managedTeams.length,
+        };
+      }),
+    );
+
+    res.status(200).json(userWithStats);
   } catch (err) {
     res.status(500).json({
       error: err.message,
@@ -100,21 +129,30 @@ export const inviteUser = async (req, res) => {
     });
 
     // This will be your fronted link later
-    const inviteLink = `http://localhost:3000/accept-invite?token=${rawToken}`;
+    const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
+
+    console.log("INVITE LINK:", inviteLink);
+    console.log("SENDING TO:", normalizedEmail);
+
+    const html = inviteEmailTemplate({
+      inviteLink,
+      organization: req.user.organization,
+      role,
+      team,
+    });
+
+      const emailResponse = await sendEmail(
+        normalizedEmail,
+        "You're invited to WorkComposer",
+        html
+      );
+
+      console.log("EMAIL RESPONSE:", emailResponse);
 
     res.status(201).json({
       message: "Invitation created",
-      inviteLink, // TEMP (for testing)
     });
 
-    //TODO: later = send email with invite link
-    // For now just simulate
-
-    // res.status(200).json({
-    //   message: "Invitation sent successfully",
-    //   email,
-    //   role,
-    // });
   } catch (err) {
     console.log(err);
 
@@ -175,6 +213,8 @@ export const acceptInvite = async (req, res) => {
       lastName,
       role: invite.role,
       organization: invite.organization,
+      team: invite.team,
+      isVerified: true,
     });
 
     invite.isAccepted = true;
@@ -199,6 +239,7 @@ export const getInviteDetails = async (req, res) => {
   try {
     const { token } = req.params;
 
+    
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
     const invite = await Invite.findOne({ token: hashedToken });
@@ -257,6 +298,8 @@ export const updateUserRole = async (req, res) => {
     const { role } = req.body;
     const { id } = req.params;
 
+    const currentUser = req.user;
+
     if (!role) {
       return res.status(400).json({
         message: "Role is required",
@@ -284,7 +327,25 @@ export const updateUserRole = async (req, res) => {
       });
     }
 
-    user.role = role;
+    if (user.role === "admin" && currentUser.role !== "owner") {
+      return res.status(403).json({
+        message: "Only owner can modify admin roles",
+      });
+    }
+
+    if (currentUser.role === "admin" && role === "admin") {
+      return res.status(403).json({
+        message: "Admin cannot assign admin role",
+      });
+    }
+
+    if (currentUser.role !== "owner" && currentUser.role !== "admin") {
+      return res.status(403).json({
+        message: "Unauthorized",
+      });
+    }
+
+    user.role = role.toLowerCase();
     await user.save();
 
     res.json({
@@ -366,8 +427,6 @@ export const resendInvite = async (req, res) => {
   try {
     const { id } = req.body;
 
-    console.log("EMAIL RECIEVED:", id);
-
     const invite = await Invite.findById(id);
 
     if (!invite) {
@@ -376,11 +435,6 @@ export const resendInvite = async (req, res) => {
       });
     }
 
-    res.status(200).json({
-      message: "Invite resent successfully",
-    });
-
-    //Generate new token
     const rawToken = crypto.randomBytes(32).toString("hex");
 
     const hashedToken = crypto
@@ -389,17 +443,21 @@ export const resendInvite = async (req, res) => {
       .digest("hex");
 
     invite.token = hashedToken;
+
     invite.expireAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
     await invite.save();
 
-    const inviteLink = `http://localhost:3000/accept-invite?token=${rawToken}`;
+    const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
 
-    res.json({
-      message: "Invite resent",
-      inviteLink,
+    // SEND EMAIL HERE
+
+    return res.status(200).json({
+      message: "Invite resent successfully",
     });
   } catch (err) {
+    console.log(err);
+
     res.status(500).json({
       error: err.message,
     });
@@ -409,41 +467,146 @@ export const resendInvite = async (req, res) => {
 // All Users with invites
 export const getAllUsersWithInvites = async (req, res) => {
   try {
-    //Active users
-    const users = await User.find({
-      organization: req.user.organization,
-    }).select("-password");
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 5;
 
-    // Pending invites
-    const invites = await Invite.find({
+    const search = req.query.search || "";
+    const role = req.query.role || "";
+    const team = req.query.team || "";
+
+    const skip = (page - 1) * limit;
+
+    // USER QUERY
+    const userQuery = {
+      organization: req.user.organization,
+    };
+
+    // INVITE QUERY
+    const inviteQuery = {
       organization: req.user.organization,
       isAccepted: { $ne: true },
       expireAt: { $gt: new Date() },
-    });
+    };
 
-    // Format users
-    const formattedUsers = users.map((user) => ({
-      id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-      status: "active",
-    }));
+    // SEARCH
+    if (search) {
+      userQuery.$or = [
+        {
+          firstName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          lastName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          email: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+      ];
 
-    // Format invites
+      inviteQuery.email = {
+        $regex: search,
+        $options: "i",
+      };
+    }
+
+    // ROLE FILTER
+    if (role && role !== "All Roles") {
+      userQuery.role = role.toLowerCase();
+
+      inviteQuery.role = role.toLowerCase();
+    }
+
+    // TEAM FILTER
+    if (team && team !== "All Teams") {
+      userQuery.team = team;
+
+      inviteQuery.team = team;
+    }
+
+    // ACTIVE USERS
+    const users = await User.find(userQuery).select("-password");
+
+    // PENDING INVITES
+    const invites = await Invite.find(inviteQuery);
+
+    // FORMAT USERS
+    const formattedUsers = await Promise.all(
+      users.map(async (user) => {
+        let managedUsersCount = 0;
+        let managedTeamsCount = 0;
+
+        if (user.role === "manager") {
+          const managedUsers = await User.find({
+            manager: user._id,
+            role: "user",
+            _id: { $ne: user._id },
+          }).distinct("_id");
+
+          managedUsersCount = managedUsers.length;
+
+          const teams = await User.distinct("team", {
+            manager: user._id,
+            role: "user",
+            team: { $ne: null },
+          });
+
+          managedTeamsCount = teams.length;
+        }
+
+        return {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          role: user.role,
+          team: user.team,
+          status: user.isArchived ? "archived" : "active",
+          createdAt: user.createdAt,
+
+          managedUsersCount,
+          managedTeamsCount,
+        };
+      }),
+    );
+
+    // FORMAT INVITES
     const formattedInvites = invites.map((invite) => ({
       id: invite._id,
       email: invite.email,
       role: invite.role,
+      team: invite.team,
       status: "invited",
+      createdAt: invite.createdAt,
+      expireAt: invite.expireAt,
     }));
 
-    // Merge both
+    // MERGE
     const allUsers = [...formattedUsers, ...formattedInvites];
 
-    res.json(allUsers);
+    // SORT LATEST FIRST
+    allUsers.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // PAGINATION
+    const paginatedUsers = allUsers.slice(skip, skip + limit);
+
+    res.json({
+      users: paginatedUsers,
+      totalUsers: allUsers.length,
+      totalPages: Math.ceil(allUsers.length / limit),
+      currentPage: page,
+      currentUser: req.user,
+    });
   } catch (err) {
+    console.log(err);
+
     res.status(500).json({
       error: err.message,
     });
@@ -469,7 +632,7 @@ export const bulkInvitesUsers = async (req, res) => {
         const email = rawEmail.trim().toLowerCase();
 
         //Email validation
-        const emailRegex = /^[^|s@]+@[^|s@]+|.[^|s@]+$/;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!emailRegex.test(email)) {
           failed.push({
@@ -536,6 +699,809 @@ export const bulkInvitesUsers = async (req, res) => {
 
     res.status(500).json({
       message: "Server error",
+    });
+  }
+};
+
+//Update Users
+export const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { firstName, lastName, team, password } = req.body;
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    if (firstName !== undefined) {
+      user.firstName = firstName;
+    }
+
+    if (lastName !== undefined) {
+      user.lastName = lastName;
+    }
+
+    if (team !== undefined) {
+      user.team = team;
+    }
+
+    // optional password update
+    if (password && password.trim() !== "") {
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      user.password = hashedPassword;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      user,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+// Update Users Email
+export const updateUserEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      _id: { $ne: id },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email already exists",
+      });
+    }
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    user.email = normalizedEmail;
+
+    await user.save();
+
+    res.json({
+      message: "Email updated successfully",
+      user,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+// Email Change Request
+export const requestEmailChange = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newEmail } = req.body;
+
+    console.log("BODY:", req.body);
+    console.log("NEW EMAIL:", newEmail);
+
+    if (!newEmail) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = newEmail.toLowerCase().trim();
+
+    // Check existing email
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email already exists",
+      });
+    }
+
+    // Find user
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    // Generate token
+    const rawToken = crypto.randomBytes(32).toString("hex");
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
+
+    // Delete old requests
+    await EmailChange.deleteMany({
+      user: user._id,
+    });
+
+    // Save pending request
+    await EmailChange.create({
+      user: user._id,
+      newEmail: normalizedEmail,
+      token: hashedToken,
+      expireAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    });
+
+    // TEMP verification link
+    const verifyLink = `${process.env.CLIENT_URL}/verify-email-change/${rawToken}`;
+
+    console.log("VERIFY LINK:", verifyLink);
+
+    res.json({
+      message: "Verification email sent",
+      verifyLink,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+//Verify Mail
+export const verifyEmailChange = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+    const emailChange = await EmailChange.findOne({
+      token: hashedToken,
+    });
+
+    if (!emailChange) {
+      return res.status(400).json({
+        message: "Invalid token",
+      });
+    }
+
+    if (emailChange.expireAt < new Date()) {
+      return res.status(400).json({
+        message: "Token expired",
+      });
+    }
+
+    const user = await User.findById(emailChange.user);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    user.email = emailChange.newEmail;
+
+    await user.save();
+
+    await emailChange.deleteOne();
+
+    res.json({
+      message: "Email updated successfully",
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+//Archive user
+export const archiveUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    if (user.role === "owner") {
+      return res.status(400).json({
+        message: "Owner cannot be archived",
+      });
+    }
+
+    user.isArchived = true;
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "User archived successfully",
+      user,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+//Unarchived User
+export const unarchiveUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    user.isArchived = false;
+
+    await user.save();
+
+    res.json({
+      message: "User unarchived successfully",
+      user,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+//Update Invite Roles
+export const updateInviteRole = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { role } = req.body;
+
+    const invite = await Invite.findById(id);
+
+    if (!invite) {
+      return res.status(404).json({
+        message: "Invite not found",
+      });
+    }
+
+    invite.role = role.toLowerCase();
+
+    await invite.save();
+
+    res.status(200).json({
+      message: "Invite role updated successfully",
+      invite,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+// User devices
+export const getUserDevices = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("devices email");
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      email: user.email,
+      devices: user.devices,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+// Manager Controller
+export const assignManager = async (req, res) => {
+  try {
+    const { userIds = [], teams = [] } = req.body;
+
+    const manager = await User.findById(req.params.id);
+
+    if (!manager) {
+      return res.status(404).json({
+        message: "Manager not found",
+      });
+    }
+
+    // REMOVE OLD ASSIGNED USERS
+    await User.updateMany(
+      {
+        manager: manager._id,
+      },
+      {
+        $unset: {
+          manager: "",
+        },
+      },
+    );
+
+    // FINAL IDS
+    const assignedUserIds = new Set(userIds);
+
+    // TEAM USERS
+    const validTeams = teams.filter(
+      (team) => team.toLowerCase() !== "default team",
+    );
+
+    if (validTeams.length > 0) {
+      const teamUsers = await User.find({
+        organization: req.user.organization,
+        team: { $in: validTeams },
+      }).select("_id");
+
+      teamUsers.forEach((u) => assignedUserIds.add(u._id.toString()));
+    }
+    await User.updateMany(
+      {
+        manager: manager._id,
+        organization: req.user.organization,
+        _id: { $nin: userIds },
+      },
+      {
+        $unset: {
+          manager: "",
+        },
+      },
+    );
+
+    // ASSIGN NEW USERS
+    await User.updateMany(
+      {
+        organization: req.user.organization,
+        _id: { $in: [...assignedUserIds] },
+      },
+      {
+        $set: {
+          manager: manager._id,
+        },
+      },
+    );
+
+    res.status(200).json({
+      message: "Manager updated successfully",
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Failed to assign manager",
+    });
+  }
+};
+
+// Users CSV
+export const exportUsersCsv = async (req, res) => {
+  try {
+    const users = await User.find({
+      organization: req.user.organization,
+    }).select("-password");
+
+    const formattedUsers = users.map((user) => ({
+      "First Name": user.firstName || "",
+      "Last Name": user.lastName || "",
+      Email: user.email || "",
+      Role: user.role || "",
+      Team: user.team || "Default team",
+      Status: user.isArchived ? "Archived" : "Active",
+    }));
+
+    const parser = new Parser();
+
+    const csv = parser.parse(data);
+
+    const hierarchyCsv = parser.parse(formattedUsers);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("users.csv");
+
+    return res.send(hierarchyCsv);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+// Hierarchy (Users) CSV
+export const exportUsersHierarchy = async (req, res) => {
+  try {
+    const users = await User.find({
+      organization: req.user.organization,
+    })
+      .populate("manager", "firstName lastName email")
+      .select("firstName lastName email team manager");
+
+    const data = users.map((user) => ({
+      "User Name": `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+
+      "User Email": user.email,
+
+      Team: user.team || "Default team",
+
+      "Manager Name": user.manager
+        ? `${user.manager.firstName || ""} ${user.manager.lastName || ""}`.trim()
+        : "-",
+
+      "Manager Email": user.manager?.email || "-",
+    }));
+
+    const parser = new Parser();
+
+    const csv = parser.parse(data);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("hierarchy-users.csv");
+
+    return res.send(csv);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Export failed",
+    });
+  }
+};
+
+// Hierarchy (Managers) CSV
+export const exportManagersHierarchy = async (req, res) => {
+  try {
+    const managers = await User.find({
+      organization: req.user.organization,
+      role: "manager",
+    }).select("firstName lastName email team");
+
+    const data = await Promise.all(
+      managers.map(async (manager) => {
+        const managedUsers = await User.countDocuments({
+          manager: manager._id,
+        });
+
+        return {
+          "Manager Name":
+            `${manager.firstName || ""} ${manager.lastName || ""}`.trim(),
+
+          "Manager Email": manager.email,
+
+          Team: manager.team || "Default team",
+
+          "Managed Users": managedUsers,
+        };
+      }),
+    );
+
+    const parser = new Parser();
+
+    const managersCsv = parser.parse(data);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("hierarchy-managers.csv");
+
+    return res.send(managersCsv);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Export failed",
+    });
+  }
+};
+
+// Devices CSV
+export const exportDevices = async (req, res) => {
+  try {
+    const users = await User.find({
+      organization: req.user.organization,
+    }).select("firstName lastName email devices");
+
+    const data = [];
+
+    users.forEach((user) => {
+      if (!user.devices || user.devices.length === 0) {
+        data.push({
+          "User Name": `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+
+          "User Email": user.email,
+
+          Device: "-",
+
+          OS: "-",
+
+          Browser: "-",
+
+          "Last Active": "-",
+        });
+      } else {
+        user.devices.forEach((device) => {
+          data.push({
+            "User Name":
+              `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+
+            "User Email": user.email,
+
+            Device: device.deviceName || "-",
+
+            OS: device.os || "-",
+
+            Browser: device.browser || "-",
+
+            "Last Active": device.lastActive
+              ? new Date(device.lastActive).toLocaleString()
+              : "-",
+          });
+        });
+      }
+    });
+
+    const parser = new Parser();
+
+    const devicesCsv = parser.parse(data);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("devices.csv");
+
+    return res.send(devicesCsv);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Export failed",
+    });
+  }
+};
+
+// Import Users
+export const importUsers = async (req, res) => {
+  try {
+
+    const { users } = req.body;
+
+    if (!users || !Array.isArray(users)) {
+      return res.status(400).json({
+        message: "Users array is required",
+      });
+    }
+
+    const success = [];
+    const failed = [];
+
+    const validRoles = ["user", "manager", "admin"];
+
+    for (const row of users) {
+
+      try {
+
+        const email =
+          row.email?.trim().toLowerCase();
+
+        const role =
+          row.role?.trim().toLowerCase() || "user";
+
+        let team =
+          row.team?.trim() || "Default team";
+
+        // EMAIL REQUIRED
+        if (!email) {
+
+          failed.push({
+            email: "Missing email",
+            reason: "Email required",
+          });
+
+          continue;
+        }
+
+        // VALID EMAIL
+        const emailRegex =
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!emailRegex.test(email)) {
+
+          failed.push({
+            email,
+            reason: "Invalid email",
+          });
+
+          continue;
+        }
+
+        // VALID ROLE
+        if (!validRoles.includes(role)) {
+
+          failed.push({
+            email,
+            reason: "Invalid role",
+          });
+
+          continue;
+        }
+
+        // EXISTING USER
+        const existingUser =
+          await User.findOne({ email });
+
+        if (existingUser) {
+
+          failed.push({
+            email,
+            reason: "User already exists",
+          });
+
+          continue;
+        }
+
+        // EXISTING INVITE
+        const existingInvite =
+          await Invite.findOne({
+            email,
+            isAccepted: false,
+          });
+
+        if (existingInvite) {
+
+          failed.push({
+            email,
+            reason: "Already invited",
+          });
+
+          continue;
+        }
+
+        // TOKEN
+        const rawToken =
+          crypto.randomBytes(32).toString("hex");
+
+        const hashedToken = crypto
+          .createHash("sha256")
+          .update(rawToken)
+          .digest("hex");
+
+        // CREATE INVITE
+        await Invite.create({
+          email,
+          role,
+          team,
+          token: hashedToken,
+          invitedBy: req.user._id,
+          organization: req.user.organization,
+          expireAt: new Date(
+            Date.now() + 1000 * 60 * 60 * 24
+          ),
+        });
+
+        success.push(email);
+
+      } catch (err) {
+
+        failed.push({
+          email: row.email || "Unknown",
+          reason: "Import failed",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      message: "Import completed",
+      imported: success.length,
+      failedCount: failed.length,
+      success,
+      failed,
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).json({
+      message: "Import failed",
+    });
+  }
+};
+
+// Export Users
+export const exportUsers = async (req, res) => {
+  try {
+    const users = await User.find({
+      organization: req.user.organization,
+    })
+      .populate("manager", "email")
+      .select("_id firstName lastName email team manager");
+
+    const formattedUsers = users.map((user) => ({
+      ID: user._id,
+
+      "First Name": user.firstName || "",
+
+      "Last Name": user.lastName || "",
+
+      Email: user.email || "",
+
+      "Team Name": user.team || "Default team",
+
+      "Direct Managers": user.manager?.email || "",
+
+      Password: "",
+
+      "External ID": "",
+    }));
+
+    const parser = new Parser();
+
+    const csv = parser.parse(formattedUsers);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("users.csv");
+
+    return res.send(csv);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Export failed",
     });
   }
 };

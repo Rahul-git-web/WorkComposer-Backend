@@ -4,6 +4,7 @@ import authRoutes from "./routes/authRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import cors from "cors";
+import teamRoutes from "./routes/teamRoutes.js";
 
 const app = express();
 
@@ -20,5 +21,6 @@ app.use(
 app.use("/api/auth", authRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/teams", teamRoutes);
 
 export default app;

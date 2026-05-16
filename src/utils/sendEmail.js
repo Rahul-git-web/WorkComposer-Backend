@@ -1,20 +1,26 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 const sendEmail = async (to, subject, html) => {
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
-  await transporter.sendMail({
-    from: `"WorkComposer" <${process.env.EMAIL_USER}>`,
-    to,
-    subject,
-    html,
-  });
+    const data = await resend.emails.send({
+      from: process.env.EMAIL_FROM,
+      to,
+      subject,
+      html,
+    });
+
+    console.log("RESEND SUCCESS:", data);
+
+    return data;
+
+  } catch (err) {
+
+    console.log("EMAIL ERROR:", err);
+
+    throw err;
+  }
 };
 
 export default sendEmail;
