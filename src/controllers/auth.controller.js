@@ -7,6 +7,8 @@ import {
   generateRefreshToken,
 } from "../utils/generateTokens.js";
 import sendEmail from "../utils/sendEmail.js";
+import verifyEmailTemplate from "../templates/veifyEmailTemplate.js";
+import Organization from "../models/organization.model.js";
 
 // Register Controller
 
@@ -31,14 +33,18 @@ export const registerUser = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const organizationDoc = await Organization.create({
+      name: organization,
+    });
     const verificationToken = crypto.randomBytes(32).toString("hex");
 
     const user = await User.create({
       firstName,
       lastName,
       email: email.toLowerCase().trim(),
-      organization,
+      organization: organizationDoc._id,
       password: hashedPassword,
+      role: "owner",
       verificationToken,
       verificationTokenExpire: Date.now() + 24 * 60 * 60 * 1000,
     });
@@ -49,13 +55,12 @@ export const registerUser = async (req, res) => {
     const verifyUrl = `http://localhost:5000/api/auth/verify/${verificationToken}`;
 
     // Send Email
-    await sendEmail(
-      user.email,
-      "Verify your account",
-      `<h2>Verify your account</h2>
-   <p>Click below link:</p>
-   <a href="${verifyUrl}">${verifyUrl}</a>`,
-    );
+    const html = verifyEmailTemplate({
+      verifyUrl,
+      firstName: user.firstName,
+    });
+
+    await sendEmail(user.email, "Verify your email", html);
 
     res.status(201).json({
       message: "Registration successful. Please verify your email.",
@@ -102,10 +107,32 @@ export const loginUser = async (req, res) => {
       });
     }
 
+    const deviceInfo = {
+      ip: req.ip || req.headers["x-forwarded-for"] || "Unknown IP",
+
+      location: "India",
+
+      hostname: req.headers["user-agent"] || "Unknown Device",
+
+      platform: req.headers["sec-ch-ua-platform"] || "Unknown Platform",
+
+      appVersion: "1.0.0",
+
+      loginTime: new Date(),
+
+      lastSync: new Date(),
+
+      isOnline: true,
+    };
+
+    user.devices.push(deviceInfo);
+
     const accessToken = generateAccessToken(user._id);
+
     const refreshToken = generateRefreshToken(user._id);
 
     user.refreshToken = refreshToken;
+
     await user.save();
 
     res.cookie("refreshToken", refreshToken, {
@@ -221,15 +248,15 @@ export const verifyEmail = async (req, res) => {
   try {
     const { token } = req.params;
 
+    console.log("VERIFY TOKEN:", token);
+
     const user = await User.findOne({
       verificationToken: token,
       verificationTokenExpire: { $gt: Date.now() },
     });
 
     if (!user) {
-      return res.redirect(
-        `${process.env.CLIENT_URL}/authenticate/verify-mail?error=true`,
-      );
+      return res.send("Invalid or expired token");
     }
 
     user.isVerified = true;
@@ -238,10 +265,16 @@ export const verifyEmail = async (req, res) => {
 
     await user.save();
 
-    res.redirect(`${process.env.CLIENT_URL}/authenticate/login?verified=true`);
+    console.log("EMAIL VERIFIED");
+
+    return res.redirect(
+  "http://localhost:3000/authenticate/login?verified=true"
+);
+
   } catch (err) {
-    console.error(err);
-    res.redirect(`${process.env.CLIENT_URL}/error`);
+    console.log(err);
+
+    return res.status(500).send(err.message);
   }
 };
 
@@ -272,11 +305,12 @@ export const resendVerification = async (req, res) => {
 
     const verifyUrl = `http://localhost:5000/api/auth/verify/${verificationToken}`;
 
-    await sendEmail(
-      user.email,
-      "Verify your account",
-      `<a href="${verifyUrl}">Verify Email</a>`,
-    );
+    const html = verifyEmailTemplate({
+      verifyUrl,
+      firstName: user.firstName,
+    });
+
+    await sendEmail(user.email, "Verify your email", html);
 
     res.json({
       message: "Verification email sent again",
@@ -312,7 +346,7 @@ export const forgotPassword = async (req, res) => {
     await sendEmail(
       user.email,
       "Reset Password",
-      `<a href="${resetUrl}">Reset Password</a>`
+      `<a href="${resetUrl}">Reset Password</a>`,
     );
 
     res.json({
@@ -331,12 +365,12 @@ export const resetPassword = async (req, res) => {
 
   console.log("Token from request:", token);
 
-const user = await User.findOne({
-  resetToken: token,
-  resetTokenExpire: { $gt: Date.now() },
-});
+  const user = await User.findOne({
+    resetToken: token,
+    resetTokenExpire: { $gt: Date.now() },
+  });
 
-console.log("User found:", user);
+  console.log("User found:", user);
 
   if (!user) {
     return res.status(400).json({
