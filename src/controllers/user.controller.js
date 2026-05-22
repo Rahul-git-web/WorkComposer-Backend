@@ -85,6 +85,7 @@ export const inviteUser = async (req, res) => {
 
     const existingInvite = await Invite.findOne({
       email: normalizedEmail,
+      organization: req.user.organization,
       isAccepted: false,
       expireAt: { $gt: new Date() },
     });
@@ -96,7 +97,10 @@ export const inviteUser = async (req, res) => {
     }
 
     //Check if already existing
-    const existingUser = await User.findOne({ email: normalizedEmail });
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      organization: req.user.organization,
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -141,23 +145,84 @@ export const inviteUser = async (req, res) => {
       team,
     });
 
-      const emailResponse = await sendEmail(
-        normalizedEmail,
-        "You're invited to WorkComposer",
-        html
-      );
+    const emailResponse = await sendEmail(
+      normalizedEmail,
+      "You're invited to WorkComposer",
+      html,
+    );
 
-      console.log("EMAIL RESPONSE:", emailResponse);
+    console.log("EMAIL RESPONSE:", emailResponse);
 
     res.status(201).json({
       message: "Invitation created",
     });
-
   } catch (err) {
     console.log(err);
 
     res.status(500).json({
       error: err.message,
+    });
+  }
+};
+
+export const createUser = async (req, res) => {
+  try {
+    const { firstName, lastName, email, password, role, team } = req.body;
+
+    if (!firstName || !lastName || !email || !password) {
+      return res.status(400).json({
+        message: "All fields are required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // EMAIL VALIDATION
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        message: "Invalid email",
+      });
+    }
+
+    // EXISTING USER
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      organization: req.user.organization,
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    // HASH PASSWORD
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // CREATE USER
+    const user = await User.create({
+      firstName,
+      lastName,
+      email: normalizedEmail,
+      password: hashedPassword,
+      role: role?.toLowerCase() || "user",
+      team: team || "Default team",
+      organization: req.user.organization,
+      isVerified: true,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      user,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      message: "Failed to create user",
     });
   }
 };
@@ -239,7 +304,6 @@ export const getInviteDetails = async (req, res) => {
   try {
     const { token } = req.params;
 
-    
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
     const invite = await Invite.findOne({ token: hashedToken });
@@ -544,21 +608,28 @@ export const getAllUsersWithInvites = async (req, res) => {
         let managedTeamsCount = 0;
 
         if (user.role === "manager") {
-          const managedUsers = await User.find({
+          const managedUsersCount = await User.countDocuments({
             manager: user._id,
-            role: "user",
-            _id: { $ne: user._id },
-          }).distinct("_id");
+          });
 
-          managedUsersCount = managedUsers.length;
-
-          const teams = await User.distinct("team", {
+          const managedTeams = await User.distinct("team", {
             manager: user._id,
-            role: "user",
             team: { $ne: null },
           });
 
-          managedTeamsCount = teams.length;
+          return {
+            id: user._id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            role: user.role,
+            team: user.team,
+            status: user.isArchived ? "archived" : "active",
+            createdAt: user.createdAt,
+
+            managedUsersCount,
+            managedTeamsCount: managedTeams.length,
+          };
         }
 
         return {
@@ -1061,18 +1132,6 @@ export const assignManager = async (req, res) => {
       });
     }
 
-    // REMOVE OLD ASSIGNED USERS
-    await User.updateMany(
-      {
-        manager: manager._id,
-      },
-      {
-        $unset: {
-          manager: "",
-        },
-      },
-    );
-
     // FINAL IDS
     const assignedUserIds = new Set(userIds);
 
@@ -1085,15 +1144,33 @@ export const assignManager = async (req, res) => {
       const teamUsers = await User.find({
         organization: req.user.organization,
         team: { $in: validTeams },
-      }).select("_id");
+      }).select("_id role");
 
-      teamUsers.forEach((u) => assignedUserIds.add(u._id.toString()));
+      // ONLY NORMAL USERS
+      teamUsers.forEach((u) => {
+        if (u._id.toString() !== manager._id.toString()) {
+          assignedUserIds.add(u._id.toString());
+        }
+      });
     }
+
+    // ONLY USERS ROLE
+    const validUsers = await User.find({
+      organization: req.user.organization,
+      _id: {
+        $in: [...assignedUserIds],
+        $ne: manager._id,
+      },
+    }).select("_id");
+
+    const validUserIds = validUsers.map((u) => u._id);
+
+    // REMOVE OLD USERS
     await User.updateMany(
       {
         manager: manager._id,
         organization: req.user.organization,
-        _id: { $nin: userIds },
+        _id: { $nin: validUserIds },
       },
       {
         $unset: {
@@ -1106,7 +1183,7 @@ export const assignManager = async (req, res) => {
     await User.updateMany(
       {
         organization: req.user.organization,
-        _id: { $in: [...assignedUserIds] },
+        _id: { $in: validUserIds },
       },
       {
         $set: {
@@ -1316,7 +1393,6 @@ export const exportDevices = async (req, res) => {
 // Import Users
 export const importUsers = async (req, res) => {
   try {
-
     const { users } = req.body;
 
     if (!users || !Array.isArray(users)) {
@@ -1331,21 +1407,15 @@ export const importUsers = async (req, res) => {
     const validRoles = ["user", "manager", "admin"];
 
     for (const row of users) {
-
       try {
+        const email = row.email?.trim().toLowerCase();
 
-        const email =
-          row.email?.trim().toLowerCase();
+        const role = row.role?.trim().toLowerCase() || "user";
 
-        const role =
-          row.role?.trim().toLowerCase() || "user";
-
-        let team =
-          row.team?.trim() || "Default team";
+        let team = row.team?.trim() || "Default team";
 
         // EMAIL REQUIRED
         if (!email) {
-
           failed.push({
             email: "Missing email",
             reason: "Email required",
@@ -1355,11 +1425,9 @@ export const importUsers = async (req, res) => {
         }
 
         // VALID EMAIL
-        const emailRegex =
-          /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!emailRegex.test(email)) {
-
           failed.push({
             email,
             reason: "Invalid email",
@@ -1370,7 +1438,6 @@ export const importUsers = async (req, res) => {
 
         // VALID ROLE
         if (!validRoles.includes(role)) {
-
           failed.push({
             email,
             reason: "Invalid role",
@@ -1380,11 +1447,9 @@ export const importUsers = async (req, res) => {
         }
 
         // EXISTING USER
-        const existingUser =
-          await User.findOne({ email });
+        const existingUser = await User.findOne({ email });
 
         if (existingUser) {
-
           failed.push({
             email,
             reason: "User already exists",
@@ -1394,14 +1459,12 @@ export const importUsers = async (req, res) => {
         }
 
         // EXISTING INVITE
-        const existingInvite =
-          await Invite.findOne({
-            email,
-            isAccepted: false,
-          });
+        const existingInvite = await Invite.findOne({
+          email,
+          isAccepted: false,
+        });
 
         if (existingInvite) {
-
           failed.push({
             email,
             reason: "Already invited",
@@ -1411,8 +1474,7 @@ export const importUsers = async (req, res) => {
         }
 
         // TOKEN
-        const rawToken =
-          crypto.randomBytes(32).toString("hex");
+        const rawToken = crypto.randomBytes(32).toString("hex");
 
         const hashedToken = crypto
           .createHash("sha256")
@@ -1427,15 +1489,11 @@ export const importUsers = async (req, res) => {
           token: hashedToken,
           invitedBy: req.user._id,
           organization: req.user.organization,
-          expireAt: new Date(
-            Date.now() + 1000 * 60 * 60 * 24
-          ),
+          expireAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
         });
 
         success.push(email);
-
       } catch (err) {
-
         failed.push({
           email: row.email || "Unknown",
           reason: "Import failed",
@@ -1450,9 +1508,7 @@ export const importUsers = async (req, res) => {
       success,
       failed,
     });
-
   } catch (err) {
-
     console.log(err);
 
     res.status(500).json({

@@ -8,6 +8,7 @@ import {
 } from "../utils/generateTokens.js";
 import sendEmail from "../utils/sendEmail.js";
 import verifyEmailTemplate from "../templates/veifyEmailTemplate.js";
+import Organization from "../models/organization.model.js";
 
 // Register Controller
 
@@ -32,14 +33,18 @@ export const registerUser = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const organizationDoc = await Organization.create({
+      name: organization,
+    });
     const verificationToken = crypto.randomBytes(32).toString("hex");
 
     const user = await User.create({
       firstName,
       lastName,
       email: email.toLowerCase().trim(),
-      organization,
+      organization: organizationDoc._id,
       password: hashedPassword,
+      role: "owner",
       verificationToken,
       verificationTokenExpire: Date.now() + 24 * 60 * 60 * 1000,
     });
@@ -243,15 +248,15 @@ export const verifyEmail = async (req, res) => {
   try {
     const { token } = req.params;
 
+    console.log("VERIFY TOKEN:", token);
+
     const user = await User.findOne({
       verificationToken: token,
       verificationTokenExpire: { $gt: Date.now() },
     });
 
     if (!user) {
-      return res.redirect(
-        `${process.env.CLIENT_URL}/authenticate/verify-mail?error=true`,
-      );
+      return res.send("Invalid or expired token");
     }
 
     user.isVerified = true;
@@ -260,10 +265,16 @@ export const verifyEmail = async (req, res) => {
 
     await user.save();
 
-    res.redirect(`${process.env.CLIENT_URL}/authenticate/login?verified=true`);
+    console.log("EMAIL VERIFIED");
+
+    return res.redirect(
+  "http://localhost:3000/authenticate/login?verified=true"
+);
+
   } catch (err) {
-    console.error(err);
-    res.redirect(`${process.env.CLIENT_URL}/error`);
+    console.log(err);
+
+    return res.status(500).send(err.message);
   }
 };
 

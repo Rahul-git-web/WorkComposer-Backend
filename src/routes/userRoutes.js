@@ -5,6 +5,7 @@ import {
   archiveUser,
   assignManager,
   bulkInvitesUsers,
+  createUser,
   deleteUser,
   exportDevices,
   exportManagersHierarchy,
@@ -45,6 +46,14 @@ router.post(
   authorizeRoles("owner", "admin", "manager"),
   inviteUser,
 );
+
+router.post(
+  "/create-user",
+  protect,
+  authorizeRoles("owner", "admin", "manager"),
+  createUser,
+);
+
 router.post("/accept-invite", acceptInvite);
 
 router.get("/invite/:token", getInviteDetails);
@@ -93,7 +102,7 @@ router.get(
   "/export-users",
   protect,
   authorizeRoles("owner", "admin"),
-  exportUsers
+  exportUsers,
 );
 
 router.put("/:id/email-request", protect, requestEmailChange);

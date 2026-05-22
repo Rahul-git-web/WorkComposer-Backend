@@ -20,9 +20,9 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
     organization: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
       required: true,
-      trim: true,
     },
     role: {
       type: String,

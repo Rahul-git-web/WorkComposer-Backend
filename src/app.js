@@ -5,6 +5,8 @@ import sessionRoutes from "./routes/sessionRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import cors from "cors";
 import teamRoutes from "./routes/teamRoutes.js";
+import taskRoutes from "./routes/taskRoutes.js";
+import projectRoutes from "./routes/projectRoutes.js";
 
 const app = express();
 
@@ -22,5 +24,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/teams", teamRoutes);
+app.use("/api/tasks", taskRoutes);
+app.use("/api/projects", projectRoutes);
 
 export default app;
