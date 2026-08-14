@@ -5,5 +5,5 @@ export const getAvatarUrl = (avatar) => {
     return avatar;
   }
 
-  return `http://localhost:5000/${avatar}`;
+   return `${process.env.BACKEND_URL}/${avatar}`;
 };

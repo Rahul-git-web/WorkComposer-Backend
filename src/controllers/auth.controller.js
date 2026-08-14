@@ -25,7 +25,7 @@ import { getAppleAuthUrl, getAppleUser } from "../utils/appleOAuth.js";
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  "http://localhost:5000/api/auth/google/callback",
+  process.env.GOOGLE_REDIRECT_URI
 );
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -115,7 +115,7 @@ export const registerUser = async (req, res) => {
     await user.save();
 
     // Verification Link
-    const verifyUrl = `http://localhost:5000/api/auth/verify/${verificationToken}`;
+    const verifyUrl = `${process.env.BACKEND_URL}/api/auth/verify/${verificationToken}`;
 
     // Send Email
     const html = verifyEmailTemplate({
@@ -404,7 +404,7 @@ export const verifyEmail = async (req, res) => {
     await user.save();
 
     return res.redirect(
-      "http://localhost:3000/authenticate/login?verified=true",
+      `${process.env.FRONTEND_URL}/authenticate/login?verified=true`,
     );
   } catch (err) {
     console.error(err);
@@ -438,7 +438,7 @@ export const resendVerification = async (req, res) => {
 
     await user.save();
 
-    const verifyUrl = `http://localhost:5000/api/auth/verify/${verificationToken}`;
+    const verifyUrl = `${process.env.BACKEND_URL}/api/auth/verify/${verificationToken}`;
 
     const html = verifyEmailTemplate({
       verifyUrl,
@@ -476,7 +476,7 @@ export const forgotPassword = async (req, res) => {
 
     await user.save();
 
-    const resetUrl = `http://localhost:3000/authenticate/reset-password?token=${resetToken}`;
+   const resetUrl = `${process.env.FRONTEND_URL}/authenticate/reset-password?token=${resetToken}`;
 
     await sendEmail(
       user.email,
@@ -724,7 +724,7 @@ export const googleCallback = async (req, res) => {
 
       const signupTarget = isDesktop
         ? `workcomposer://signup?google=true&token=${encodeURIComponent(googleSignupToken)}`
-        : `http://localhost:3000/authenticate/signup?google=true&token=${encodeURIComponent(googleSignupToken)}`;
+        : `${process.env.FRONTEND_URL}/authenticate/signup?google=true&token=${encodeURIComponent(googleSignupToken)}`;
 
       return res.redirect(signupTarget);
     }
@@ -770,12 +770,12 @@ export const googleCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect("http://localhost:3000/dashboard");
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`);
   } catch (err) {
     console.error("GOOGLE AUTH ERROR:", err);
 
     return res.redirect(
-      "http://localhost:3000/authenticate/login?error=google_auth_failed",
+      `${process.env.FRONTEND_URL}/authenticate/login?error=google_auth_failed`,
     );
   }
 };
@@ -863,7 +863,7 @@ export const microsoftCallback = async (req, res) => {
 
       const signupTarget = isDesktop
         ? `workcomposer://signup?microsoft=true&token=${encodeURIComponent(microsoftSignupToken)}`
-        : `http://localhost:3000/authenticate/signup?microsoft=true&token=${encodeURIComponent(microsoftSignupToken)}`;
+        : `${process.env.FRONTEND_URL}/authenticate/signup?microsoft=true&token=${encodeURIComponent(microsoftSignupToken)}`;
 
       return res.redirect(signupTarget);
     }
@@ -908,12 +908,12 @@ export const microsoftCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect("http://localhost:3000/dashboard");
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`);
   } catch (err) {
     console.error("MICROSOFT AUTH ERROR:", err);
 
     return res.redirect(
-      "http://localhost:3000/authenticate/login?error=microsoft_auth_failed",
+      `${process.env.FRONTEND_URL}/authenticate/login?error=microsoft_auth_failed`,
     );
   }
 };
@@ -1019,7 +1019,7 @@ export const appleCallback = async (req, res) => {
 
       const signupTarget = isDesktop
         ? `workcomposer://signup?apple=true&token=${encodeURIComponent(appleSignupToken)}`
-        : `http://localhost:3000/authenticate/signup?apple=true&token=${encodeURIComponent(appleSignupToken)}`;
+        : `${process.env.FRONTEND_URL}/authenticate/signup?apple=true&token=${encodeURIComponent(appleSignupToken)}`;
 
       return res.redirect(signupTarget);
     }
@@ -1064,12 +1064,12 @@ export const appleCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect("http://localhost:3000/dashboard");
+    return res.redirect("`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`");
   } catch (err) {
     console.error("APPLE AUTH ERROR:", err);
 
     return res.redirect(
-      "http://localhost:3000/authenticate/login?error=apple_auth_failed",
+      `${process.env.FRONTEND_URL}/authenticate/login?error=apple_auth_failed`,
     );
   }
 };

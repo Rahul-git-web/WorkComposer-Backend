@@ -67,7 +67,7 @@ export const buildTaskAssignedMessage = ({
             text: "Open Task",
             emoji: true,
           },
-          url: `http://localhost:3000/dashboard/task-management?task=${taskId}`,
+          url: `${process.env.FRONTEND_URL}/dashboard/task-management?task=${taskId}`,
         },
       ],
     },

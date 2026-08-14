@@ -97,7 +97,7 @@ export const jiraCallback = async (req, res) => {
     );
 
     res.redirect(
-      "http://localhost:3000/dashboard/settings/account/integrations/jira",
+      `${process.env.FRONTEND_URL}/dashboard/settings/account/integrations/jira`,
     );
   } catch (err) {
     console.error(

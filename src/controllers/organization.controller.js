@@ -74,7 +74,7 @@ export const uploadLogo = async (req, res) => {
 
     res.status(200).json({
       message: "Logo uploaded successfully",
-      logo: `http://localhost:5000/${organization.logo}`,
+      logo: `${process.env.BACKEND_URL}/${organization.logo}`,
     });
   } catch (err) {
     console.error(err);

@@ -126,7 +126,7 @@ export const uploadAvatar = async (req, res) => {
 
     res.status(200).json({
       message: "Avatar updated successfully",
-      avatar: `http://localhost:5000/${user.avatar}`,
+      avatar: `${process.env.BACKEND_URL}/${user.avatar}`,
     });
   } catch (err) {
     console.error(err);

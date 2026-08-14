@@ -43,7 +43,7 @@ export const slackCallback = async (req, res) => {
 
     if (error) {
       return res.redirect(
-        "http://localhost:3000/dashboard/settings/account/integrations/slack?status=cancelled",
+        `${process.env.FRONTEND_URL}/dashboard/settings/account/integrations/slack?status=cancelled`,
       );
     }
 
@@ -100,7 +100,7 @@ export const slackCallback = async (req, res) => {
     });
 
     return res.redirect(
-      "http://localhost:3000/dashboard/settings/account/integrations/slack",
+      `${process.env.FRONTEND_URL}/dashboard/settings/account/integrations/slack`,
     );
   } catch (err) {
     console.error(err);
@@ -326,7 +326,7 @@ export const handleSlackInteraction = async (req, res) => {
 
       return res.json({
         response_action: "open_link",
-        url: `http://localhost:3000/dashboard/task-management?task=${taskId}`,
+        url: `${process.env.FRONTEND_URL}/dashboard/task-management?task=${taskId}`,
       });
     }
 

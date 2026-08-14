@@ -72,7 +72,7 @@ router.get("/me", protect, async (req, res) => {
       !userObj.avatar.startsWith("http://") &&
       !userObj.avatar.startsWith("https://")
     ) {
-      userObj.avatar = `http://localhost:5000/${userObj.avatar}`;
+      userObj.avatar = `${process.env.BACKEND_URL}/${userObj.avatar}`;
     }
 
     res.json(userObj);
