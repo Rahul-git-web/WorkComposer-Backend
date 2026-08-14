@@ -2,11 +2,9 @@ import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
 
 export const protect = async (req, res, next) => {
-
-
   try {
     const token =
-      req.cookies.accessToken || req.headers.authorization?.split(" ")[1];
+      req.headers.authorization?.split(" ")[1] || req.cookies.accessToken;
     if (!token) {
       return res.status(401).json({
         message: "Not authorized, no token",
@@ -21,8 +19,9 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(decoded.userId).select("-password");
-
+    const user = await User.findById(decoded.userId)
+      .select("-password")
+      .populate("organization");
 
     if (!user) {
       return res.status(401).json({

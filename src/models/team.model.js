@@ -14,7 +14,8 @@ const teamSchema = new mongoose.Schema(
     },
 
     organization: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
       required: true,
     },
 
@@ -25,7 +26,7 @@ const teamSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 const Team = mongoose.model("Team", teamSchema);

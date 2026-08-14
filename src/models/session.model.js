@@ -21,6 +21,11 @@ const sessionSchema = new mongoose.Schema(
       enum: ["work", "break"],
       default: "work",
     },
+    source: {
+      type: String,
+      enum: ["tracking", "manual"],
+      default: "tracking",
+    },
   },
   { timestamps: true },
 );

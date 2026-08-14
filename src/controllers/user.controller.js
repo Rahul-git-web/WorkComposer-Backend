@@ -1,11 +1,22 @@
 import User from "../models/user.model.js";
+import Team from "../models/team.model.js";
 import Invite from "../models/invite.model.js";
 import EmailChange from "../models/emailChange.model.js";
+import Organization from "../models/organization.model.js";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { Parser } from "json2csv";
 import sendEmail from "../utils/sendEmail.js";
 import inviteEmailTemplate from "../templates/inviteEmailTemplate.js";
+import { getAvatarUrl } from "../utils/avatar.js";
+import {
+  auditSettingsChanged,
+  auditUserCreated,
+  auditRoleChanged,
+  auditUserArchived,
+  auditUserRestored,
+} from "../utils/auditService.js";
+import Role from "../models/role.model.js";
 
 export const getUsers = async (req, res) => {
   try {
@@ -19,30 +30,44 @@ export const getUsers = async (req, res) => {
 
       users = await User.find({
         organization: currentUser.organization,
-      }).select("-password");
+      })
+        .populate("team", "name")
+        .select("-password");
     } else if (currentUser.role === "admin") {
       // ADMIN = all except owner
       users = await User.find({
         organization: currentUser.organization,
         role: { $ne: "owner" },
-      }).select("-password");
+      })
+        .populate("team", "name")
+        .select("-password -refreshToken");
     } else if (currentUser.role === "manager") {
-      // MANAGER = only same team users
+      // MANAGER = self + managed users
+
       users = await User.find({
         organization: currentUser.organization,
-        team: currentUser.team,
-      }).select("-password");
+        $or: [{ _id: currentUser._id }, { manager: currentUser._id }],
+      })
+        .populate("team", "name")
+        .select("-password -refreshToken");
     } else {
       //USER = only self
       users = await User.find({
         _id: currentUser._id,
-      }).select("-password");
+      })
+        .populate("team", "name")
+        .select("-password -refreshToken");
     }
 
     const userWithStats = await Promise.all(
       users.map(async (user) => {
         if (user.role !== "manager") {
-          return user;
+          return {
+            ...user.toObject(),
+            avatar: getAvatarUrl(user.avatar),
+            managedUsersCount: 0,
+            managedTeamsCount: 0,
+          };
         }
 
         // USERS COUNT
@@ -58,6 +83,7 @@ export const getUsers = async (req, res) => {
 
         return {
           ...user.toObject(),
+          avatar: getAvatarUrl(user.avatar),
           managedUsersCount: managedUsers,
           managedTeamsCount: managedTeams.length,
         };
@@ -75,14 +101,58 @@ export const getUsers = async (req, res) => {
 export const inviteUser = async (req, res) => {
   try {
     const { email, role, team } = req.body;
-    const normalizedEmail = email.toLowerCase().trim();
 
-    if (!email || !role) {
+    // -----------------------------
+    // 1. Validate required fields
+    // -----------------------------
+    if (!email || !role || !team) {
       return res.status(400).json({
-        message: "Email and role required",
+        message: "Email, role and team are required",
       });
     }
 
+    // -----------------------------
+    // 2. Normalize email
+    // -----------------------------
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // -----------------------------
+    // 3. Validate email format
+    // -----------------------------
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        message: "Invalid email address",
+      });
+    }
+
+    // -----------------------------
+    // 4. Prevent self invitation
+    // -----------------------------
+    if (normalizedEmail === req.user.email.trim().toLowerCase()) {
+      return res.status(400).json({
+        message: "You cannot invite yourself",
+      });
+    }
+
+    // -----------------------------
+    // 5. Check existing user
+    // -----------------------------
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      organization: req.user.organization,
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    // -----------------------------
+    // 6. Check existing active invite
+    // -----------------------------
     const existingInvite = await Invite.findOne({
       email: normalizedEmail,
       organization: req.user.organization,
@@ -96,25 +166,23 @@ export const inviteUser = async (req, res) => {
       });
     }
 
-    //Check if already existing
-    const existingUser = await User.findOne({
-      email: normalizedEmail,
+    // -----------------------------
+    // 7. Validate team
+    // -----------------------------
+    const teamExists = await Team.findOne({
+      _id: team,
       organization: req.user.organization,
     });
 
-    if (existingUser) {
+    if (!teamExists) {
       return res.status(400).json({
-        message: "User already exists",
+        message: "Invalid team",
       });
     }
 
-    if (normalizedEmail === req.user.email.toLowerCase()) {
-      return res.status(400).json({
-        message: "You cannot invite yourself",
-      });
-    }
-
-    // Generate token
+    // -----------------------------
+    // 8. Generate secure token
+    // -----------------------------
     const rawToken = crypto.randomBytes(32).toString("hex");
 
     const hashedToken = crypto
@@ -122,45 +190,61 @@ export const inviteUser = async (req, res) => {
       .update(rawToken)
       .digest("hex");
 
+    // -----------------------------
+    // 9. Create invitation
+    // -----------------------------
     const invite = await Invite.create({
       email: normalizedEmail,
       role,
-      team,
+      team: teamExists._id,
       token: hashedToken,
       invitedBy: req.user._id,
       organization: req.user.organization,
       expireAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
     });
 
-    // This will be your fronted link later
-    const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
+    try {
+      // -----------------------------
+      // 10. Generate invitation link
+      // -----------------------------
+      const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
 
-    console.log("INVITE LINK:", inviteLink);
-    console.log("SENDING TO:", normalizedEmail);
+      // -----------------------------
+      // 11. Generate email
+      // -----------------------------
+      const html = inviteEmailTemplate({
+        inviteLink,
+        organization: req.user.organization,
+        role,
+        team: teamExists.name,
+      });
 
-    const html = inviteEmailTemplate({
-      inviteLink,
-      organization: req.user.organization,
-      role,
-      team,
-    });
+      // -----------------------------
+      // 12. Send email
+      // -----------------------------
+      await sendEmail(normalizedEmail, "You're invited to WorkComposer", html);
+    } catch (emailError) {
+      // Email failed → remove the invitation
+      await Invite.findByIdAndDelete(invite._id);
 
-    const emailResponse = await sendEmail(
-      normalizedEmail,
-      "You're invited to WorkComposer",
-      html,
-    );
+      console.error("INVITATION EMAIL FAILED:", emailError);
 
-    console.log("EMAIL RESPONSE:", emailResponse);
+      return res.status(500).json({
+        message: "Invitation could not be sent. Please try again.",
+      });
+    }
 
-    res.status(201).json({
-      message: "Invitation created",
+    // -----------------------------
+    // 13. Success
+    // -----------------------------
+    return res.status(201).json({
+      message: "Invitation sent successfully",
     });
   } catch (err) {
-    console.log(err);
+    console.error("INVITE USER ERROR:", err);
 
-    res.status(500).json({
-      error: err.message,
+    return res.status(500).json({
+      message: "Server error",
     });
   }
 };
@@ -201,6 +285,27 @@ export const createUser = async (req, res) => {
     // HASH PASSWORD
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const roleName =
+      (role?.toLowerCase() || "user").charAt(0).toUpperCase() +
+      (role?.toLowerCase() || "user").slice(1);
+
+    const roleDoc = await Role.findOne({
+      organization: req.user.organization,
+      name: roleName,
+    });
+
+    // Find the default team if no team is selected
+    let teamId = team;
+
+    if (!teamId) {
+      const defaultTeam = await Team.findOne({
+        organization: req.user.organization,
+        name: "Default team",
+      });
+
+      teamId = defaultTeam?._id || null;
+    }
+
     // CREATE USER
     const user = await User.create({
       firstName,
@@ -208,9 +313,15 @@ export const createUser = async (req, res) => {
       email: normalizedEmail,
       password: hashedPassword,
       role: role?.toLowerCase() || "user",
-      team: team || "Default team",
+      roleRef: roleDoc?._id,
+      team: teamId,
       organization: req.user.organization,
       isVerified: true,
+    });
+
+    await auditUserCreated({
+      req,
+      createdUser: user,
     });
 
     res.status(201).json({
@@ -219,7 +330,7 @@ export const createUser = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Failed to create user",
@@ -233,13 +344,21 @@ export const acceptInvite = async (req, res) => {
 
     if (!token || !password || !firstName || !lastName) {
       return res.status(400).json({
-        message: "All fields required",
+        message: "All fields are required",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Password must be at least 8 characters",
       });
     }
 
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-    const invite = await Invite.findOne({ token: hashedToken });
+    const invite = await Invite.findOne({
+      token: hashedToken,
+    });
 
     if (!invite) {
       return res.status(400).json({
@@ -247,21 +366,23 @@ export const acceptInvite = async (req, res) => {
       });
     }
 
-    if (invite.expireAt < new Date()) {
+    if (invite.isAccepted) {
       return res.status(400).json({
-        message: "Invite expired",
+        message: "Invitation has already been used",
       });
     }
 
-    if (invite.isAccepted) {
+    if (invite.expireAt < new Date()) {
       return res.status(400).json({
-        message: "Already used",
+        message: "Invitation has expired",
       });
     }
 
     const existingUser = await User.findOne({
       email: invite.email.toLowerCase(),
+      organization: invite.organization,
     });
+
     if (existingUser) {
       return res.status(400).json({
         message: "User already exists",
@@ -270,12 +391,11 @@ export const acceptInvite = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    //Create User
     const user = await User.create({
       email: invite.email.toLowerCase(),
       password: hashedPassword,
-      firstName,
-      lastName,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
       role: invite.role,
       organization: invite.organization,
       team: invite.team,
@@ -285,7 +405,7 @@ export const acceptInvite = async (req, res) => {
     invite.isAccepted = true;
     await invite.save();
 
-    res.json({
+    return res.status(201).json({
       message: "Account created successfully",
       user: {
         id: user._id,
@@ -294,8 +414,10 @@ export const acceptInvite = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({
-      error: err.message,
+    console.error("ACCEPT INVITE ERROR:", err);
+
+    return res.status(500).json({
+      message: "Server error",
     });
   }
 };
@@ -306,7 +428,9 @@ export const getInviteDetails = async (req, res) => {
 
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-    const invite = await Invite.findOne({ token: hashedToken });
+    const invite = await Invite.findOne({
+      token: hashedToken,
+    }).populate("team", "name");
 
     if (!invite) {
       return res.status(400).json({
@@ -329,10 +453,13 @@ export const getInviteDetails = async (req, res) => {
     res.json({
       email: invite.email,
       role: invite.role,
+      team: invite.team?.name || "Team",
     });
   } catch (err) {
+    console.error("GET INVITE DETAILS ERROR:", err);
+
     res.status(500).json({
-      error: err.message,
+      message: "Server error",
     });
   }
 };
@@ -340,8 +467,6 @@ export const getInviteDetails = async (req, res) => {
 // Pending invite
 export const getInvites = async (req, res) => {
   try {
-    console.log("ORG:", req.user.organization);
-
     const invites = await Invite.find({
       organization: req.user.organization,
       isAccepted: { $ne: true },
@@ -409,8 +534,17 @@ export const updateUserRole = async (req, res) => {
       });
     }
 
+    const previousRole = user.role;
+
     user.role = role.toLowerCase();
     await user.save();
+
+    await auditRoleChanged({
+      req,
+      user,
+      previousRole,
+      newRole: user.role,
+    });
 
     res.json({
       message: "Role updated successfully",
@@ -428,8 +562,6 @@ export const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
 
-    console.log("DELETE PARAM ID:", id);
-
     if (!id || id === "undefined") {
       return res.status(400).json({
         message: "Invalid user id",
@@ -438,8 +570,6 @@ export const deleteUser = async (req, res) => {
 
     // First check users collection
     let user = await User.findById(id);
-
-    console.log("FOUND USER:", user);
 
     if (user) {
       if (user.role === "owner") {
@@ -450,8 +580,6 @@ export const deleteUser = async (req, res) => {
 
       await user.deleteOne();
 
-      console.log("USER DELETED");
-
       return res.json({
         success: true,
         message: "User deleted successfully",
@@ -461,12 +589,8 @@ export const deleteUser = async (req, res) => {
     // Check invites collection
     const invite = await Invite.findById(id);
 
-    console.log("FOUND INVITE:", invite);
-
     if (invite) {
       await invite.deleteOne();
-
-      console.log("INVITE DELETED");
 
       return res.json({
         success: true,
@@ -478,7 +602,7 @@ export const deleteUser = async (req, res) => {
       message: "User or invite not found",
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -520,7 +644,7 @@ export const resendInvite = async (req, res) => {
       message: "Invite resent successfully",
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -590,13 +714,23 @@ export const getAllUsersWithInvites = async (req, res) => {
 
     // TEAM FILTER
     if (team && team !== "All Teams") {
-      userQuery.team = team;
+      const selectedTeam = await Team.findOne({
+        organization: req.user.organization,
+        name: team,
+      });
 
-      inviteQuery.team = team;
+      if (selectedTeam) {
+        userQuery.team = selectedTeam._id;
+        inviteQuery.team = team;
+      } else {
+        userQuery.team = null;
+      }
     }
 
     // ACTIVE USERS
-    const users = await User.find(userQuery).select("-password");
+    const users = await User.find(userQuery)
+      .populate("team", "name")
+      .select("-password");
 
     // PENDING INVITES
     const invites = await Invite.find(inviteQuery);
@@ -619,14 +753,16 @@ export const getAllUsersWithInvites = async (req, res) => {
 
           return {
             id: user._id,
+            _id: user._id,
             firstName: user.firstName,
             lastName: user.lastName,
             email: user.email,
+            avatar: getAvatarUrl(user.avatar),
             role: user.role,
-            team: user.team,
+            team: user.team?.name || "",
             status: user.isArchived ? "archived" : "active",
             createdAt: user.createdAt,
-
+            devices: user.devices || [],
             managedUsersCount,
             managedTeamsCount: managedTeams.length,
           };
@@ -634,23 +770,27 @@ export const getAllUsersWithInvites = async (req, res) => {
 
         return {
           id: user._id,
+          _id: user._id,
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
+          avatar: getAvatarUrl(user.avatar),
           role: user.role,
-          team: user.team,
+          team: user.team?.name || "",
           status: user.isArchived ? "archived" : "active",
           createdAt: user.createdAt,
-
+          devices: user.devices || [],
           managedUsersCount,
           managedTeamsCount,
         };
       }),
     );
+    
 
     // FORMAT INVITES
     const formattedInvites = invites.map((invite) => ({
       id: invite._id,
+      _id: invite._id,
       email: invite.email,
       role: invite.role,
       team: invite.team,
@@ -676,7 +816,7 @@ export const getAllUsersWithInvites = async (req, res) => {
       currentUser: req.user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -695,16 +835,46 @@ export const bulkInvitesUsers = async (req, res) => {
       });
     }
 
+    if (!role) {
+      return res.status(400).json({
+        message: "Role is required",
+      });
+    }
+
+    if (!team) {
+      return res.status(400).json({
+        message: "Team is required",
+      });
+    }
+
+    // Validate team belongs to current organization
+    const selectedTeam = await Team.findOne({
+      _id: team,
+      organization: req.user.organization,
+    });
+
+    if (!selectedTeam) {
+      return res.status(400).json({
+        message: "Invalid team",
+      });
+    }
+
     const success = [];
     const failed = [];
 
-    for (const rawEmail of emails) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    const normalizedEmails = [
+      ...new Set(
+        emails.map((email) => email.trim().toLowerCase()).filter(Boolean),
+      ),
+    ];
+
+    for (const email of normalizedEmails) {
       try {
-        const email = rawEmail.trim().toLowerCase();
-
-        //Email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
+        // -----------------------------
+        // Email validation
+        // -----------------------------
         if (!emailRegex.test(email)) {
           failed.push({
             email,
@@ -714,8 +884,25 @@ export const bulkInvitesUsers = async (req, res) => {
           continue;
         }
 
-        //Check existing User
-        const existingUser = await User.findOne({ email });
+        // -----------------------------
+        // Prevent self invitation
+        // -----------------------------
+        if (email === req.user.email.toLowerCase().trim()) {
+          failed.push({
+            email,
+            reason: "You cannot invite yourself",
+          });
+
+          continue;
+        }
+
+        // -----------------------------
+        // Existing user
+        // -----------------------------
+        const existingUser = await User.findOne({
+          email,
+          organization: req.user.organization,
+        });
 
         if (existingUser) {
           failed.push({
@@ -726,49 +913,100 @@ export const bulkInvitesUsers = async (req, res) => {
           continue;
         }
 
-        //Check existing invite
-        const existingInvite = await Invite.findOne({ email });
+        // -----------------------------
+        // Existing active invitation
+        // -----------------------------
+        const existingInvite = await Invite.findOne({
+          email,
+          organization: req.user.organization,
+          isAccepted: false,
+          expireAt: { $gt: new Date() },
+        });
 
         if (existingInvite) {
           failed.push({
             email,
-            reason: "Already invited",
+            reason: "Invite already sent",
           });
 
           continue;
         }
 
-        // Generate token
-        const token = crypto.randomBytes(32).toString("hex");
+        // -----------------------------
+        // Generate secure token
+        // -----------------------------
+        const rawToken = crypto.randomBytes(32).toString("hex");
 
-        // Create invite
-        await Invite.create({
+        const hashedToken = crypto
+          .createHash("sha256")
+          .update(rawToken)
+          .digest("hex");
+
+        // -----------------------------
+        // Create invitation
+        // -----------------------------
+        const invite = await Invite.create({
           email,
-          role: role || "user",
-          team,
-          token,
+          role,
+          team: selectedTeam._id,
+          token: hashedToken,
           invitedBy: req.user._id,
           organization: req.user.organization,
           expireAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
         });
 
-        success.push(email);
+        try {
+          // -----------------------------
+          // Generate invitation URL
+          // -----------------------------
+          const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
+
+          // -----------------------------
+          // Generate email
+          // -----------------------------
+          const html = inviteEmailTemplate({
+            inviteLink,
+            organization: req.user.organization,
+            role,
+            team: selectedTeam._id,
+          });
+
+          // -----------------------------
+          // Send invitation email
+          // -----------------------------
+          await sendEmail(email, "You're invited to WorkComposer", html);
+
+          success.push(email);
+        } catch (emailError) {
+          console.error(`INVITATION EMAIL FAILED FOR ${email}:`, emailError);
+
+          // Don't leave a dead invitation
+          // if the email wasn't actually sent.
+          await Invite.findByIdAndDelete(invite._id);
+
+          failed.push({
+            email,
+            reason: "Failed to send invitation email",
+          });
+        }
       } catch (err) {
+        console.error(`BULK INVITE FAILED FOR ${email}:`, err);
+
         failed.push({
-          email: rawEmail,
+          email,
           reason: "Something went wrong",
         });
       }
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success,
       failed,
     });
   } catch (err) {
-    console.log(err);
+    console.error("BULK INVITE ERROR:", err);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error",
     });
   }
@@ -815,7 +1053,7 @@ export const updateUser = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -865,7 +1103,7 @@ export const updateUserEmail = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -878,9 +1116,6 @@ export const requestEmailChange = async (req, res) => {
   try {
     const { id } = req.params;
     const { newEmail } = req.body;
-
-    console.log("BODY:", req.body);
-    console.log("NEW EMAIL:", newEmail);
 
     if (!newEmail) {
       return res.status(400).json({
@@ -934,14 +1169,12 @@ export const requestEmailChange = async (req, res) => {
     // TEMP verification link
     const verifyLink = `${process.env.CLIENT_URL}/verify-email-change/${rawToken}`;
 
-    console.log("VERIFY LINK:", verifyLink);
-
     res.json({
       message: "Verification email sent",
       verifyLink,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -990,7 +1223,7 @@ export const verifyEmailChange = async (req, res) => {
       message: "Email updated successfully",
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -1021,13 +1254,18 @@ export const archiveUser = async (req, res) => {
 
     await user.save();
 
+    await auditUserArchived({
+      req,
+      user,
+    });
+
     res.status(200).json({
       success: true,
       message: "User archived successfully",
       user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Server error",
@@ -1050,12 +1288,17 @@ export const unarchiveUser = async (req, res) => {
 
     await user.save();
 
+    await auditUserRestored({
+      req,
+      user,
+    });
+
     res.json({
       message: "User unarchived successfully",
       user,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Server error",
@@ -1087,7 +1330,7 @@ export const updateInviteRole = async (req, res) => {
       invite,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: err.message,
@@ -1106,14 +1349,157 @@ export const getUserDevices = async (req, res) => {
       });
     }
 
+    const latestDevice = [...(user.devices || [])].sort((a, b) => {
+      const aTime = a.lastSync ? new Date(a.lastSync).getTime() : 0;
+
+      const bTime = b.lastSync ? new Date(b.lastSync).getTime() : 0;
+
+      return bTime - aTime;
+    })[0];
+
     res.status(200).json({
       email: user.email,
-      devices: user.devices,
+      devices: latestDevice ? [latestDevice] : [],
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+export const registerUserDevice = async (req, res) => {
+  try {
+    const { deviceId, platform, appVersion, hostname } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({
+        message: "Device ID is required",
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const existingDevice = user.devices.find(
+      (device) => device.deviceId === deviceId,
+    );
+
+    if (existingDevice) {
+      existingDevice.platform = platform || existingDevice.platform;
+      existingDevice.appVersion = appVersion || existingDevice.appVersion;
+      existingDevice.hostname = hostname || existingDevice.hostname;
+
+      existingDevice.ip =
+        req.ip || req.headers["x-forwarded-for"] || existingDevice.ip;
+
+      existingDevice.lastSync = new Date();
+      existingDevice.isOnline = true;
+    } else {
+      user.devices.push({
+        deviceId,
+        ip: req.ip || req.headers["x-forwarded-for"] || "Unknown IP",
+        location: "Unknown",
+        platform: platform || "Unknown",
+        appVersion: appVersion || "Unknown",
+        hostname: hostname || "",
+        loginTime: new Date(),
+        lastSync: new Date(),
+        isOnline: true,
+      });
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: existingDevice
+        ? "Device updated successfully"
+        : "Device registered successfully",
+    });
+  } catch (err) {
+    console.error("REGISTER DEVICE ERROR:", err);
+
+    return res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+export const logoutUserDevice = async (req, res) => {
+  try {
+    const { id, deviceId } = req.params;
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const device = user.devices.find((device) => device.deviceId === deviceId);
+
+    if (!device) {
+      return res.status(404).json({
+        message: "Device not found",
+      });
+    }
+
+    device.isOnline = false;
+    device.lastSync = new Date();
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Device signed out successfully",
+    });
+  } catch (err) {
+    console.error("LOGOUT DEVICE ERROR:", err);
+
+    return res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+export const checkUserDevice = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+
+    const user = await User.findById(req.user._id).select("devices");
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const device = user.devices.find((device) => device.deviceId === deviceId);
+
+    if (!device) {
+      return res.status(404).json({
+        authorized: false,
+        message: "Device not found",
+      });
+    }
+
+    return res.json({
+      authorized: device.isOnline === true,
+      isOnline: device.isOnline,
+    });
+  } catch (err) {
+    console.error("CHECK DEVICE ERROR:", err);
+
+    return res.status(500).json({
       message: err.message,
     });
   }
@@ -1136,17 +1522,19 @@ export const assignManager = async (req, res) => {
     const assignedUserIds = new Set(userIds);
 
     // TEAM USERS
-    const validTeams = teams.filter(
-      (team) => team.toLowerCase() !== "default team",
-    );
+    if (teams.length > 0) {
+      const teamDocs = await Team.find({
+        organization: req.user.organization,
+        name: { $in: teams },
+      }).select("_id");
 
-    if (validTeams.length > 0) {
+      const teamIds = teamDocs.map((team) => team._id);
+
       const teamUsers = await User.find({
         organization: req.user.organization,
-        team: { $in: validTeams },
-      }).select("_id role");
+        team: { $in: teamIds },
+      }).select("_id");
 
-      // ONLY NORMAL USERS
       teamUsers.forEach((u) => {
         if (u._id.toString() !== manager._id.toString()) {
           assignedUserIds.add(u._id.toString());
@@ -1196,10 +1584,46 @@ export const assignManager = async (req, res) => {
       message: "Manager updated successfully",
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Failed to assign manager",
+    });
+  }
+};
+
+// Manager Assignment Controller
+export const getManagerAssignments = async (req, res) => {
+  try {
+    const manager = await User.findById(req.params.id);
+
+    if (!manager) {
+      return res.status(404).json({
+        message: "Manager not found",
+      });
+    }
+
+    // Users assigned to this manager
+    const users = await User.find({
+      organization: req.user.organization,
+      manager: manager._id,
+    })
+      .populate("team", "name")
+      .select("_id team");
+
+    const userIds = users.map((u) => u._id);
+
+    const teams = [...new Set(users.map((u) => u.team?.name).filter(Boolean))];
+
+    res.json({
+      userIds,
+      teams,
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      message: "Failed to fetch manager assignments",
     });
   }
 };
@@ -1232,7 +1656,7 @@ export const exportUsersCsv = async (req, res) => {
 
     return res.send(hierarchyCsv);
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: err.message,
@@ -1273,7 +1697,7 @@ export const exportUsersHierarchy = async (req, res) => {
 
     return res.send(csv);
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Export failed",
@@ -1318,7 +1742,7 @@ export const exportManagersHierarchy = async (req, res) => {
 
     return res.send(managersCsv);
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Export failed",
@@ -1382,7 +1806,7 @@ export const exportDevices = async (req, res) => {
 
     return res.send(devicesCsv);
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Export failed",
@@ -1509,7 +1933,7 @@ export const importUsers = async (req, res) => {
       failed,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Import failed",
@@ -1554,10 +1978,220 @@ export const exportUsers = async (req, res) => {
 
     return res.send(csv);
   } catch (err) {
-    console.log(err);
+    console.error(err);
 
     res.status(500).json({
       message: "Export failed",
+    });
+  }
+};
+
+const isEqual = (a, b) => {
+  return JSON.stringify(a) === JSON.stringify(b);
+};
+
+export const updateUserSetting = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { module, setting, value } = req.body;
+
+    const moduleSettings = {
+      appUpdate: ["automaticUpdates", "forceUpdates"],
+
+      tracking: [
+        "trackingMode",
+        "startTrackingOnBoot",
+        "allowWorkAwayFromComputer",
+        "pauseTrackingWhenInactive",
+        "inactivityMinutes",
+        "continueTrackingDuringSleep",
+        "sleepBreakHours",
+        "sleepBreakMinutes",
+        "displayBackToWorkReminder",
+        "stopTrackingWithoutInternet",
+        "statusBarVisibility",
+        "applicationTracking",
+        "ipTracking",
+      ],
+
+      screenCapture: ["enabled", "screenshotFrequency", "blurScreenshots"],
+
+      manualTime: [
+        "allowManualTime",
+        "requireApproval",
+        "managerApproval",
+        "backdatingLimit",
+        "requireProjectTask",
+      ],
+
+      shift: ["autoStartTracking", "autoStopTracking", "schedule"],
+
+      emailReports: [
+        "weeklyTrackingReports",
+        "dailyTrackingReports",
+
+        "dailyWarningEmails",
+        "dailyBasedOnShift",
+        "dailyMinimumTime",
+        "dailyWeekDays",
+
+        "weeklyWarningEmails",
+        "weeklyBasedOnShift",
+        "weeklyMinimumTime",
+
+        "idlePercentageEnabled",
+        "idlePercentage",
+      ],
+    };
+
+    if (!moduleSettings[module] || !moduleSettings[module].includes(setting)) {
+      return res.status(400).json({
+        message: "Invalid setting",
+      });
+    }
+
+    const userSettingFields = {
+      appUpdate: "appUpdateSettings",
+      tracking: "trackingSettings",
+      screenCapture: "screenCaptureSettings",
+      manualTime: "manualTimeSettings",
+      shift: "shiftSettings",
+      emailReports: "emailReportSettings",
+    };
+
+    const user = await User.findOne({
+      _id: id,
+      organization: req.user.organization,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+    const userField = userSettingFields[module];
+
+    if (!user[userField]) {
+      user[userField] = {};
+    }
+
+    // If user selected the same value as the organization,
+    // remove the override and inherit the organization setting.
+
+    const organizationFields = {
+      appUpdate: "appUpdates",
+      tracking: "tracking",
+      screenCapture: "screenCapture",
+      manualTime: "manualTime",
+      shift: "shift",
+      emailReports: "emailReports",
+    };
+
+    const organization = await Organization.findById(req.user.organization);
+
+    if (!organization) {
+      return res.status(404).json({
+        message: "Organization not found",
+      });
+    }
+
+    const organizationField = organizationFields[module];
+
+    if (!organizationField) {
+      return res.status(400).json({
+        message: "Invalid module",
+      });
+    }
+
+    let organizationValue = organization[organizationField]?.[setting];
+
+    if (module === "shift" && setting === "schedule") {
+      const timeTrackingSettings = await TimeTrackingSettings.findOne({
+        organization: req.user.organization,
+      });
+
+      organizationValue = timeTrackingSettings?.shift?.schedule;
+    }
+
+    const previousValue =
+      user[userField]?.[setting] === null ||
+      user[userField]?.[setting] === undefined
+        ? organizationValue
+        : user[userField][setting];
+
+    if (isEqual(value, organizationValue)) {
+      user[userField][setting] = null;
+    } else {
+      user[userField][setting] = value;
+    }
+    await user.save();
+
+    await auditSettingsChanged({
+      req,
+      setting,
+      previousValue,
+      newValue: value,
+      affectedUser: user,
+    });
+
+    res.status(200).json({
+      message: "User setting updated successfully",
+      settings: {
+        [module]: user[userField],
+      },
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      message: "Failed to update user setting",
+    });
+  }
+};
+
+export const updateUserShiftSettings = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const { autoStartTracking, autoStopTracking, schedule } = req.body;
+
+    if (!user.shiftSettings) {
+      user.shiftSettings = {};
+    }
+
+    if (autoStartTracking !== undefined) {
+      user.shiftSettings.autoStartTracking = autoStartTracking;
+    }
+
+    if (autoStopTracking !== undefined) {
+      user.shiftSettings.autoStopTracking = autoStopTracking;
+    }
+
+    if (schedule !== undefined) {
+      if (schedule === null) {
+        user.set("shiftSettings.schedule", undefined);
+        user.markModified("shiftSettings");
+      } else {
+        user.shiftSettings.schedule = schedule;
+      }
+    }
+    await user.save();
+
+    return res.status(200).json({
+      message: "User shift settings updated successfully",
+      shiftSettings: user.shiftSettings,
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      message: "Something went wrong",
     });
   }
 };

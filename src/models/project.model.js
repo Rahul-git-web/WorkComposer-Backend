@@ -8,6 +8,28 @@ const projectSchema = new mongoose.Schema(
       trim: true,
     },
 
+    jiraProjectId: {
+      type: String,
+    },
+
+    jiraProjectKey: {
+      type: String,
+    },
+
+    asanaProjectId: {
+      type: String,
+    },
+
+    asanaWebhookId: {
+      type: String,
+    },
+
+    provider: {
+      type: String,
+      enum: ["workcomposer", "jira", "asana"],
+      default: "workcomposer",
+    },
+
     teams: [
       {
         type: String,
