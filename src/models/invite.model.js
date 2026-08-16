@@ -5,6 +5,8 @@ const inviteSchema = new mongoose.Schema(
     email: {
       type: String,
       required: true,
+      lowercase: true,
+      trim: true,
     },
 
     role: {
@@ -13,38 +15,43 @@ const inviteSchema = new mongoose.Schema(
       required: true,
     },
 
-   team: {
-       type: String,
-       default: "Default team"
-    },
-    token: {
-      type: String,
-      required: true,
-    },
-    expireAt: {
-      type: Date,
-      required: true,
-    },
-    invitedBy: {
+    team: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    organization: {
-      type: String,
+      ref: "Team",
       required: true,
     },
 
-    isAccepted: {
-      type: Boolean,
-      Default: false,
-    },
     token: {
       type: String,
       required: true,
       index: true,
     },
+
+    expireAt: {
+      type: Date,
+      required: true,
+    },
+
+    invitedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    organization: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+    },
+
+    isAccepted: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+  }
 );
 
 export default mongoose.model("Invite", inviteSchema);

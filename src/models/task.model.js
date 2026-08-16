@@ -28,6 +28,24 @@ const taskSchema = new mongoose.Schema(
       ref: "Project",
     },
 
+    jiraIssueId: {
+      type: String,
+    },
+
+    jiraIssueKey: {
+      type: String,
+    },
+
+    asanaTaskId: {
+      type: String,
+    },
+
+    provider: {
+      type: String,
+      enum: ["local", "jira", "asana"],
+      default: "local",
+    },
+
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -46,6 +64,22 @@ const taskSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Organization",
       required: true,
+    },
+
+    deleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
   },
   { timestamps: true },

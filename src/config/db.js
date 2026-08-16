@@ -11,9 +11,9 @@ const connectDB = async () => {
       family: 4,
     });
 
-    console.log("MongoDB connected");
+    console.info("MongoDB connected");
   } catch (err) {
-    console.error("DB Error", err);
+    console.error("MongoDB connection failed:", err);
     process.exit(1);
   }
 };
