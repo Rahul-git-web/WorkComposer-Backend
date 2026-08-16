@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import User from "../models/user.model.js";
 import path from "path";
 import fs from "fs";
+import cloudinary from "../config/cloudinary.js";
 
 export const updateProfile = async (req, res) => {
   try {
@@ -111,25 +112,44 @@ export const uploadAvatar = async (req, res) => {
 
     const user = await User.findById(req.user._id);
 
-    // Delete previous avatar if it exists
-    if (user.avatar) {
-      const oldAvatarPath = path.join(process.cwd(), user.avatar);
-
-      if (fs.existsSync(oldAvatarPath)) {
-        fs.unlinkSync(oldAvatarPath);
+    if (!user) {
+      // Remove temporary uploaded file
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
       }
+
+      return res.status(404).json({
+        message: "User not found",
+      });
     }
 
-    user.avatar = req.file.path.replace(/\\/g, "/");
+    // Upload avatar to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "workcomposer/avatars",
+      resource_type: "image",
+    });
+
+    // Remove temporary local file
+    if (fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    // Save permanent Cloudinary URL
+    user.avatar = result.secure_url;
 
     await user.save();
 
     res.status(200).json({
       message: "Avatar updated successfully",
-      avatar: `${process.env.BACKEND_URL}/${user.avatar}`,
+      avatar: result.secure_url,
     });
   } catch (err) {
-    console.error(err);
+    console.error("AVATAR UPLOAD ERROR:", err);
+
+    // Clean up temporary file if upload/save fails
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
 
     res.status(500).json({
       message: "Failed to upload avatar",
