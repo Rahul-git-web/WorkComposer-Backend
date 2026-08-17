@@ -285,14 +285,18 @@ export const createUser = async (req, res) => {
     // HASH PASSWORD
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const roleName =
-      (role?.toLowerCase() || "user").charAt(0).toUpperCase() +
-      (role?.toLowerCase() || "user").slice(1);
+    const normalizedRole = (role || "user").trim().toLowerCase();
 
     const roleDoc = await Role.findOne({
       organization: req.user.organization,
-      name: roleName,
+      name: new RegExp(`^${normalizedRole}$`, "i"),
     });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${role}" not found for this organization`,
+      });
+    }
 
     // Validate selected team
     let teamId = team;
@@ -326,8 +330,8 @@ export const createUser = async (req, res) => {
       lastName,
       email: normalizedEmail,
       password: hashedPassword,
-      role: role?.toLowerCase() || "user",
-      roleRef: roleDoc?._id,
+      role: normalizedRole,
+      roleRef: roleDoc._id,
       team: teamId,
       organization: req.user.organization,
       isVerified: true,
@@ -405,12 +409,24 @@ export const acceptInvite = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const roleDoc = await Role.findOne({
+      organization: invite.organization,
+      name: new RegExp(`^${invite.role.trim()}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${invite.role}" not found for this organization`,
+      });
+    }
+
     const user = await User.create({
       email: invite.email.toLowerCase(),
       password: hashedPassword,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
-      role: invite.role,
+      role: invite.role.toLowerCase(),
+      roleRef: roleDoc._id,
       organization: invite.organization,
       team: invite.team,
       isVerified: true,
