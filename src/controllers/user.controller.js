@@ -1432,15 +1432,14 @@ export const registerUserDevice = async (req, res) => {
       existingDevice.appVersion = appVersion || existingDevice.appVersion;
       existingDevice.hostname = hostname || existingDevice.hostname;
 
-      existingDevice.ip =
-        req.ip || req.headers["x-forwarded-for"] || existingDevice.ip;
+      existingDevice.ip = req.ip || existingDevice.ip;
 
       existingDevice.lastSync = new Date();
       existingDevice.isOnline = true;
     } else {
       user.devices.push({
         deviceId,
-        ip: req.ip || req.headers["x-forwarded-for"] || "Unknown IP",
+        ip: req.ip || "Unknown IP",
         location: "Unknown",
         platform: platform || "Unknown",
         appVersion: appVersion || "Unknown",
