@@ -6,61 +6,497 @@ const taskAssignedEmailTemplate = ({
   status,
   dueDate,
   createdBy,
+  taskId,
 }) => {
+  const taskLink = taskId
+    ? `${process.env.CLIENT_URL}/dashboard/task-management?task=${taskId}`
+    : `${process.env.CLIENT_URL}/dashboard/task-management`;
+
+  const safeFirstName = firstName || "there";
+  const safeTitle = title || "Untitled task";
+  const safeProject = project || "No project";
+  const safePriority = priority || "Not specified";
+  const safeStatus = status || "Not specified";
+  const safeDueDate = dueDate || "No due date";
+  const safeCreatedBy = createdBy || "WorkComposer";
+
   return `
-    <div style="font-family: Arial, sans-serif; max-width:600px; margin:auto; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
-      
-      <div style="background:#4f46e5; padding:20px; color:white;">
-        <h2 style="margin:0;">New Task Assigned</h2>
-      </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Task Assigned</title>
+</head>
 
-      <div style="padding:24px;">
-        <p>Hi <strong>${firstName}</strong>,</p>
+<body style="
+  margin:0;
+  padding:0;
+  background:#f3f4f8;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  color:#111827;
+">
 
-        <p>A new task has been assigned to you.</p>
+  <table
+    width="100%"
+    cellpadding="0"
+    cellspacing="0"
+    border="0"
+    style="background:#f3f4f8; padding:40px 16px;"
+  >
+    <tr>
+      <td align="center">
 
-        <table style="width:100%; border-collapse:collapse;">
+        <table
+          width="100%"
+          cellpadding="0"
+          cellspacing="0"
+          border="0"
+          style="
+            max-width:620px;
+            background:#ffffff;
+            border-radius:20px;
+            overflow:hidden;
+            border:1px solid #e5e7eb;
+            box-shadow:0 12px 40px rgba(15,23,42,0.08);
+          "
+        >
+
+          <!-- Header -->
           <tr>
-            <td style="padding:8px 0;"><strong>Task</strong></td>
-            <td>${title}</td>
+            <td
+              style="
+                padding:34px 30px 42px;
+                text-align:center;
+                background:linear-gradient(135deg,#312e81 0%,#4f46e5 50%,#6366f1 100%);
+              "
+            >
+
+              <div style="
+                width:64px;
+                height:64px;
+                margin:0 auto 18px;
+                border-radius:18px;
+                background:rgba(255,255,255,0.14);
+                border:1px solid rgba(255,255,255,0.25);
+                line-height:64px;
+                text-align:center;
+                font-size:28px;
+                color:#ffffff;
+                font-weight:700;
+              ">
+                W
+              </div>
+
+              <div style="
+                color:#ffffff;
+                font-size:25px;
+                font-weight:700;
+                letter-spacing:-0.5px;
+              ">
+                WorkComposer
+              </div>
+
+              <div style="
+                margin-top:8px;
+                color:rgba(255,255,255,0.78);
+                font-size:13px;
+              ">
+                Work smarter. Stay connected.
+              </div>
+
+            </td>
           </tr>
 
+          <!-- Content -->
           <tr>
-            <td style="padding:8px 0;"><strong>Project</strong></td>
-            <td>${project || "-"}</td>
+            <td style="padding:42px 38px 36px;">
+
+              <!-- Badge -->
+              <div style="text-align:center; margin-bottom:22px;">
+                <span style="
+                  display:inline-block;
+                  padding:7px 14px;
+                  border-radius:999px;
+                  background:#eef2ff;
+                  color:#4f46e5;
+                  font-size:12px;
+                  font-weight:700;
+                  letter-spacing:0.4px;
+                  text-transform:uppercase;
+                ">
+                  New Task
+                </span>
+              </div>
+
+              <h1 style="
+                margin:0;
+                text-align:center;
+                color:#111827;
+                font-size:30px;
+                line-height:1.25;
+                letter-spacing:-0.8px;
+                font-weight:750;
+              ">
+                A task has been assigned to you
+              </h1>
+
+              <p style="
+                margin:16px auto 0;
+                max-width:480px;
+                text-align:center;
+                color:#6b7280;
+                font-size:15px;
+                line-height:1.7;
+              ">
+                Hi <strong style="color:#374151;">${safeFirstName}</strong>,
+                you have a new task waiting for you in WorkComposer.
+              </p>
+
+              <!-- Task Highlight -->
+              <table
+                width="100%"
+                cellpadding="0"
+                cellspacing="0"
+                border="0"
+                style="
+                  margin-top:30px;
+                  border-radius:16px;
+                  background:#f8fafc;
+                  border:1px solid #e5e7eb;
+                  overflow:hidden;
+                "
+              >
+                <tr>
+                  <td style="padding:22px;">
+
+                    <div style="
+                      color:#9ca3af;
+                      font-size:11px;
+                      text-transform:uppercase;
+                      letter-spacing:0.5px;
+                      font-weight:700;
+                    ">
+                      Task
+                    </div>
+
+                    <div style="
+                      margin-top:7px;
+                      color:#111827;
+                      font-size:20px;
+                      line-height:1.4;
+                      font-weight:700;
+                    ">
+                      ${safeTitle}
+                    </div>
+
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Details -->
+              <table
+                width="100%"
+                cellpadding="0"
+                cellspacing="0"
+                border="0"
+                style="
+                  margin-top:14px;
+                  border-radius:16px;
+                  background:#ffffff;
+                  border:1px solid #e5e7eb;
+                "
+              >
+
+                <!-- Project -->
+                <tr>
+                  <td style="padding:16px 20px; border-bottom:1px solid #f1f5f9;">
+
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td width="42">
+                          <div style="
+                            width:36px;
+                            height:36px;
+                            border-radius:10px;
+                            background:#eef2ff;
+                            color:#4f46e5;
+                            text-align:center;
+                            line-height:36px;
+                            font-size:15px;
+                            font-weight:700;
+                          ">
+                            P
+                          </div>
+                        </td>
+
+                        <td style="padding-left:12px;">
+                          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.4px;">
+                            Project
+                          </div>
+                          <div style="margin-top:3px;color:#111827;font-size:14px;font-weight:600;">
+                            ${safeProject}
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+
+                <!-- Priority -->
+                <tr>
+                  <td style="padding:16px 20px; border-bottom:1px solid #f1f5f9;">
+
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td width="42">
+                          <div style="
+                            width:36px;
+                            height:36px;
+                            border-radius:10px;
+                            background:#fff7ed;
+                            color:#ea580c;
+                            text-align:center;
+                            line-height:36px;
+                            font-size:15px;
+                            font-weight:700;
+                          ">
+                            !
+                          </div>
+                        </td>
+
+                        <td style="padding-left:12px;">
+                          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.4px;">
+                            Priority
+                          </div>
+                          <div style="margin-top:3px;color:#111827;font-size:14px;font-weight:600;text-transform:capitalize;">
+                            ${safePriority}
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+
+                <!-- Status -->
+                <tr>
+                  <td style="padding:16px 20px; border-bottom:1px solid #f1f5f9;">
+
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td width="42">
+                          <div style="
+                            width:36px;
+                            height:36px;
+                            border-radius:10px;
+                            background:#ecfdf5;
+                            color:#059669;
+                            text-align:center;
+                            line-height:36px;
+                            font-size:15px;
+                            font-weight:700;
+                          ">
+                            S
+                          </div>
+                        </td>
+
+                        <td style="padding-left:12px;">
+                          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.4px;">
+                            Status
+                          </div>
+                          <div style="margin-top:3px;color:#111827;font-size:14px;font-weight:600;text-transform:capitalize;">
+                            ${safeStatus}
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+
+                <!-- Due Date -->
+                <tr>
+                  <td style="padding:16px 20px; border-bottom:1px solid #f1f5f9;">
+
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td width="42">
+                          <div style="
+                            width:36px;
+                            height:36px;
+                            border-radius:10px;
+                            background:#fef2f2;
+                            color:#dc2626;
+                            text-align:center;
+                            line-height:36px;
+                            font-size:15px;
+                            font-weight:700;
+                          ">
+                            D
+                          </div>
+                        </td>
+
+                        <td style="padding-left:12px;">
+                          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.4px;">
+                            Due Date
+                          </div>
+                          <div style="margin-top:3px;color:#111827;font-size:14px;font-weight:600;">
+                            ${safeDueDate}
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+
+                <!-- Assigned By -->
+                <tr>
+                  <td style="padding:16px 20px;">
+
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td width="42">
+                          <div style="
+                            width:36px;
+                            height:36px;
+                            border-radius:10px;
+                            background:#f5f3ff;
+                            color:#7c3aed;
+                            text-align:center;
+                            line-height:36px;
+                            font-size:15px;
+                            font-weight:700;
+                          ">
+                            A
+                          </div>
+                        </td>
+
+                        <td style="padding-left:12px;">
+                          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:.4px;">
+                            Assigned By
+                          </div>
+                          <div style="margin-top:3px;color:#111827;font-size:14px;font-weight:600;">
+                            ${safeCreatedBy}
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+
+              </table>
+
+              <!-- CTA -->
+              <table
+                width="100%"
+                cellpadding="0"
+                cellspacing="0"
+                border="0"
+                style="margin-top:32px;"
+              >
+                <tr>
+                  <td align="center">
+
+                    <a
+                   href="${taskLink}"
+                      target="_blank"
+                      style="
+                        display:inline-block;
+                        padding:15px 30px;
+                        border-radius:11px;
+                        background:#4f46e5;
+                        color:#ffffff;
+                        text-decoration:none;
+                        font-size:15px;
+                        font-weight:700;
+                        box-shadow:0 8px 20px rgba(79,70,229,0.28);
+                      "
+                    >
+                      View Task
+                      <span style="margin-left:8px;font-size:17px;">
+                        →
+                      </span>
+                    </a>
+
+                  </td>
+                </tr>
+              </table>
+
+              <p style="
+                margin:25px 0 0;
+                text-align:center;
+                color:#9ca3af;
+                font-size:12px;
+                line-height:1.6;
+              ">
+                Open WorkComposer to review the task details,
+                update its status, and start working.
+              </p>
+
+            </td>
           </tr>
 
+          <!-- Footer -->
           <tr>
-            <td style="padding:8px 0;"><strong>Priority</strong></td>
-            <td>${priority}</td>
+            <td
+              style="
+                padding:24px 30px;
+                text-align:center;
+                background:#f8fafc;
+                border-top:1px solid #e5e7eb;
+              "
+            >
+
+              <div style="
+                color:#374151;
+                font-size:13px;
+                font-weight:600;
+              ">
+                WorkComposer
+              </div>
+
+              <div style="
+                margin-top:6px;
+                color:#9ca3af;
+                font-size:11px;
+                line-height:1.5;
+              ">
+                Productivity and workforce management, simplified.
+              </div>
+
+              <div style="
+                margin-top:12px;
+                color:#9ca3af;
+                font-size:11px;
+              ">
+                © 2026 WorkComposer. All rights reserved.
+              </div>
+
+            </td>
           </tr>
 
-          <tr>
-            <td style="padding:8px 0;"><strong>Status</strong></td>
-            <td>${status}</td>
-          </tr>
-
-          <tr>
-            <td style="padding:8px 0;"><strong>Due Date</strong></td>
-            <td>${dueDate || "-"}</td>
-          </tr>
-
-          <tr>
-            <td style="padding:8px 0;"><strong>Assigned By</strong></td>
-            <td>${createdBy}</td>
-          </tr>
         </table>
 
-        <p style="margin-top:30px;">
-          Please log in to WorkComposer to review the task details.
-        </p>
-      </div>
+      </td>
+    </tr>
+  </table>
 
-      <div style="background:#f9fafb; padding:16px; text-align:center; color:#6b7280;">
-        © WorkComposer
-      </div>
-
-    </div>
+</body>
+</html>
   `;
 };
 

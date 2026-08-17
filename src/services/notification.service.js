@@ -46,18 +46,17 @@ const sendSlackNotification = async (
 };
 
 export const notifyTaskAssigned = async ({
-  taskId,
   organizationId,
+  assignedTo,
   title,
   project,
-  assignedTo,
   priority,
   status,
   dueDate,
   createdBy,
+  taskId,
 }) => {
   try {
-
     const blocks = buildTaskAssignedMessage({
       taskId,
       title,
@@ -88,7 +87,6 @@ export const notifyTaskAssigned = async ({
       lastName: assignedTo.split(" ").slice(1).join(" "),
     });
 
-
     if (!assignedUser) {
       console.info("USER NOT FOUND");
       return;
@@ -102,10 +100,10 @@ export const notifyTaskAssigned = async ({
       status,
       dueDate,
       createdBy,
+      taskId,
     });
 
     await sendEmail(assignedUser.email, "New Task Assigned", html);
-
   } catch (err) {
     console.error("Notification Error:", err.message);
   }
