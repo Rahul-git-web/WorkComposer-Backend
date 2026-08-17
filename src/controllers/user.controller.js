@@ -558,13 +558,21 @@ export const updateUserRole = async (req, res) => {
 };
 
 //Delete users
+// Delete users
 export const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
+    const { email } = req.body;
 
     if (!id || id === "undefined") {
       return res.status(400).json({
         message: "Invalid user id",
+      });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email confirmation is required",
       });
     }
 
@@ -575,6 +583,13 @@ export const deleteUser = async (req, res) => {
       if (user.role === "owner") {
         return res.status(400).json({
           message: "Cannot delete owner",
+        });
+      }
+
+      // Verify email before deleting
+      if (user.email.toLowerCase().trim() !== email.toLowerCase().trim()) {
+        return res.status(400).json({
+          message: "Email confirmation does not match",
         });
       }
 
@@ -590,6 +605,13 @@ export const deleteUser = async (req, res) => {
     const invite = await Invite.findById(id);
 
     if (invite) {
+      // Verify invite email before deleting
+      if (invite.email?.toLowerCase().trim() !== email.toLowerCase().trim()) {
+        return res.status(400).json({
+          message: "Email confirmation does not match",
+        });
+      }
+
       await invite.deleteOne();
 
       return res.json({
@@ -785,7 +807,6 @@ export const getAllUsersWithInvites = async (req, res) => {
         };
       }),
     );
-    
 
     // FORMAT INVITES
     const formattedInvites = invites.map((invite) => ({
