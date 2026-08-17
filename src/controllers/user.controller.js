@@ -294,10 +294,24 @@ export const createUser = async (req, res) => {
       name: roleName,
     });
 
-    // Find the default team if no team is selected
+    // Validate selected team
     let teamId = team;
 
-    if (!teamId) {
+    if (teamId) {
+      const teamExists = await Team.findOne({
+        _id: teamId,
+        organization: req.user.organization,
+      });
+
+      if (!teamExists) {
+        return res.status(400).json({
+          message: "Invalid team",
+        });
+      }
+
+      teamId = teamExists._id;
+    } else {
+      // Find the default team if no team is selected
       const defaultTeam = await Team.findOne({
         organization: req.user.organization,
         name: "Default team",
