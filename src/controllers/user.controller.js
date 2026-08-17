@@ -167,7 +167,23 @@ export const inviteUser = async (req, res) => {
     }
 
     // -----------------------------
-    // 7. Validate team
+    // 7. Validate role
+    // -----------------------------
+    const normalizedRole = role.trim().toLowerCase();
+
+    const roleDoc = await Role.findOne({
+      organization: req.user.organization,
+      name: new RegExp(`^${normalizedRole}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${role}" not found for this organization`,
+      });
+    }
+
+    // -----------------------------
+    // 8. Validate team
     // -----------------------------
     const teamExists = await Team.findOne({
       _id: team,
@@ -195,7 +211,7 @@ export const inviteUser = async (req, res) => {
     // -----------------------------
     const invite = await Invite.create({
       email: normalizedEmail,
-      role,
+      role: normalizedRole,
       team: teamExists._id,
       token: hashedToken,
       invitedBy: req.user._id,
@@ -204,6 +220,16 @@ export const inviteUser = async (req, res) => {
     });
 
     try {
+      const organizationId =
+        req.user.organization?._id || req.user.organization;
+
+      const organizationDoc = await Organization.findById(organizationId)
+        .select("name")
+        .lean();
+
+      if (!organizationDoc) {
+        throw new Error("Organization not found");
+      }
       // -----------------------------
       // 10. Generate invitation link
       // -----------------------------
@@ -214,7 +240,7 @@ export const inviteUser = async (req, res) => {
       // -----------------------------
       const html = inviteEmailTemplate({
         inviteLink,
-        organization: req.user.organization,
+        organization: organizationDoc.name,
         role,
         team: teamExists.name,
       });
@@ -525,7 +551,27 @@ export const updateUserRole = async (req, res) => {
       });
     }
 
-    const user = await User.findById(id);
+    const normalizedRole = role.trim().toLowerCase();
+
+    // Only owner/admin can update roles
+    if (currentUser.role !== "owner" && currentUser.role !== "admin") {
+      return res.status(403).json({
+        message: "Unauthorized",
+      });
+    }
+
+    // Owner role can never be assigned
+    if (normalizedRole === "owner") {
+      return res.status(403).json({
+        message: "Cannot assign owner role",
+      });
+    }
+
+    // Find user only inside current organization
+    const user = await User.findOne({
+      _id: id,
+      organization: currentUser.organization,
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -533,40 +579,45 @@ export const updateUserRole = async (req, res) => {
       });
     }
 
-    if (role === "owner") {
-      return res.status(403).json({
-        message: "Cannot assign owner role",
-      });
-    }
-
-    // Prevent owner change
+    // Prevent changing existing owner
     if (user.role === "owner") {
       return res.status(400).json({
         message: "Cannot change owner role",
       });
     }
 
+    // Only owner can modify an admin
     if (user.role === "admin" && currentUser.role !== "owner") {
       return res.status(403).json({
         message: "Only owner can modify admin roles",
       });
     }
 
-    if (currentUser.role === "admin" && role === "admin") {
+    // Admin cannot assign admin
+    if (currentUser.role === "admin" && normalizedRole === "admin") {
       return res.status(403).json({
         message: "Admin cannot assign admin role",
       });
     }
 
-    if (currentUser.role !== "owner" && currentUser.role !== "admin") {
-      return res.status(403).json({
-        message: "Unauthorized",
+    // Find actual Role document
+    const roleDoc = await Role.findOne({
+      organization: currentUser.organization,
+      name: new RegExp(`^${normalizedRole}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${role}" not found for this organization`,
       });
     }
 
     const previousRole = user.role;
 
-    user.role = role.toLowerCase();
+    // Keep both fields synchronized
+    user.role = normalizedRole;
+    user.roleRef = roleDoc._id;
+
     await user.save();
 
     await auditRoleChanged({
@@ -576,18 +627,19 @@ export const updateUserRole = async (req, res) => {
       newRole: user.role,
     });
 
-    res.json({
+    return res.json({
       message: "Role updated successfully",
       user,
     });
   } catch (err) {
-    res.status(500).json({
+    console.error("UPDATE USER ROLE ERROR:", err);
+
+    return res.status(500).json({
       error: err.message,
     });
   }
 };
 
-//Delete users
 // Delete users
 export const deleteUser = async (req, res) => {
   try {
@@ -667,7 +719,17 @@ export const resendInvite = async (req, res) => {
   try {
     const { id } = req.body;
 
-    const invite = await Invite.findById(id);
+    if (!id) {
+      return res.status(400).json({
+        message: "Invite id is required",
+      });
+    }
+
+    const invite = await Invite.findOne({
+      _id: id,
+      organization: req.user.organization,
+      isAccepted: false,
+    });
 
     if (!invite) {
       return res.status(404).json({
@@ -675,6 +737,44 @@ export const resendInvite = async (req, res) => {
       });
     }
 
+    // Validate role still exists
+    const roleDoc = await Role.findOne({
+      organization: req.user.organization,
+      name: new RegExp(`^${invite.role.trim()}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${invite.role}" no longer exists for this organization`,
+      });
+    }
+
+    // Validate team
+    const teamDoc = await Team.findOne({
+      _id: invite.team,
+      organization: req.user.organization,
+    });
+
+    if (!teamDoc) {
+      return res.status(400).json({
+        message: "Invite team no longer exists",
+      });
+    }
+
+    // Get organization
+    const organizationId = req.user.organization?._id || req.user.organization;
+
+    const organizationDoc = await Organization.findById(organizationId)
+      .select("name logo")
+      .lean();
+
+    if (!organizationDoc) {
+      return res.status(404).json({
+        message: "Organization not found",
+      });
+    }
+
+    // Generate new secure token
     const rawToken = crypto.randomBytes(32).toString("hex");
 
     const hashedToken = crypto
@@ -682,23 +782,49 @@ export const resendInvite = async (req, res) => {
       .update(rawToken)
       .digest("hex");
 
-    invite.token = hashedToken;
+    const newExpireAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
-    invite.expireAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    // Temporarily keep old values until email succeeds
+    const oldToken = invite.token;
+    const oldExpireAt = invite.expireAt;
+
+    invite.token = hashedToken;
+    invite.expireAt = newExpireAt;
 
     await invite.save();
 
-    const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
+    try {
+      const inviteLink = `${process.env.CLIENT_URL}/accept-invite?token=${rawToken}`;
 
-    // SEND EMAIL HERE
+      const html = inviteEmailTemplate({
+        inviteLink,
+        organization: organizationDoc.name,
+        role: invite.role,
+        team: teamDoc.name,
+      });
+
+      await sendEmail(invite.email, "You're invited to WorkComposer", html);
+    } catch (emailError) {
+      // Restore previous working invitation
+      invite.token = oldToken;
+      invite.expireAt = oldExpireAt;
+
+      await invite.save();
+
+      console.error("RESEND INVITATION EMAIL FAILED:", emailError);
+
+      return res.status(500).json({
+        message: "Invitation could not be resent. Please try again.",
+      });
+    }
 
     return res.status(200).json({
       message: "Invite resent successfully",
     });
   } catch (err) {
-    console.error(err);
+    console.error("RESEND INVITE ERROR:", err);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: err.message,
     });
   }
@@ -910,6 +1036,33 @@ export const bulkInvitesUsers = async (req, res) => {
       });
     }
 
+    // Validate role belongs to current organization
+    const normalizedRole = role.trim().toLowerCase();
+
+    const roleDoc = await Role.findOne({
+      organization: req.user.organization,
+      name: new RegExp(`^${normalizedRole}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${role}" not found for this organization`,
+      });
+    }
+
+    // Load organization information for email
+    const organizationId = req.user.organization?._id || req.user.organization;
+
+    const organizationDoc = await Organization.findById(organizationId)
+      .select("name logo")
+      .lean();
+
+    if (!organizationDoc) {
+      return res.status(404).json({
+        message: "Organization not found",
+      });
+    }
+
     const success = [];
     const failed = [];
 
@@ -998,7 +1151,7 @@ export const bulkInvitesUsers = async (req, res) => {
         // -----------------------------
         const invite = await Invite.create({
           email,
-          role,
+          role: normalizedRole,
           team: selectedTeam._id,
           token: hashedToken,
           invitedBy: req.user._id,
@@ -1017,9 +1170,9 @@ export const bulkInvitesUsers = async (req, res) => {
           // -----------------------------
           const html = inviteEmailTemplate({
             inviteLink,
-            organization: req.user.organization,
-            role,
-            team: selectedTeam._id,
+            organization: organizationDoc.name,
+            role: normalizedRole,
+            team: selectedTeam.name,
           });
 
           // -----------------------------
@@ -1087,7 +1240,18 @@ export const updateUser = async (req, res) => {
     }
 
     if (team !== undefined) {
-      user.team = team;
+      const teamExists = await Team.findOne({
+        _id: team,
+        organization: user.organization,
+      });
+
+      if (!teamExists) {
+        return res.status(400).json({
+          message: "Invalid team",
+        });
+      }
+
+      user.team = teamExists._id;
     }
 
     // optional password update
@@ -1357,14 +1521,25 @@ export const unarchiveUser = async (req, res) => {
   }
 };
 
-//Update Invite Roles
+// Update Invite Role
 export const updateInviteRole = async (req, res) => {
   try {
     const { id } = req.params;
-
     const { role } = req.body;
 
-    const invite = await Invite.findById(id);
+    if (!role) {
+      return res.status(400).json({
+        message: "Role is required",
+      });
+    }
+
+    const normalizedRole = role.trim().toLowerCase();
+
+    const invite = await Invite.findOne({
+      _id: id,
+      organization: req.user.organization,
+      isAccepted: false,
+    });
 
     if (!invite) {
       return res.status(404).json({
@@ -1372,18 +1547,29 @@ export const updateInviteRole = async (req, res) => {
       });
     }
 
-    invite.role = role.toLowerCase();
+    const roleDoc = await Role.findOne({
+      organization: req.user.organization,
+      name: new RegExp(`^${normalizedRole}$`, "i"),
+    });
+
+    if (!roleDoc) {
+      return res.status(400).json({
+        message: `Role "${role}" not found for this organization`,
+      });
+    }
+
+    invite.role = normalizedRole;
 
     await invite.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Invite role updated successfully",
       invite,
     });
   } catch (err) {
-    console.error(err);
+    console.error("UPDATE INVITE ROLE ERROR:", err);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: err.message,
     });
   }
