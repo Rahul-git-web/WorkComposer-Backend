@@ -51,7 +51,14 @@ export const registerUser = async (req, res) => {
       microsoftId,
       appleId,
       avatar,
+       client,
     } = req.body;
+
+    if (client === "desktop") {
+  return res.status(403).json({
+    message: "Sign up is available only on the web version.",
+  });
+}
 
     if (!firstName || !lastName || !email || !organization || !password) {
       return res.status(400).json({
