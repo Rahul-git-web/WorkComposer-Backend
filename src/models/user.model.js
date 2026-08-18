@@ -20,11 +20,6 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
-    googleId: {
-      type: String,
-      default: null,
-    },
-
     twoFactorCode: {
       type: String,
     },

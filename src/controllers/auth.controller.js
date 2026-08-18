@@ -25,7 +25,7 @@ import { getAppleAuthUrl, getAppleUser } from "../utils/appleOAuth.js";
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+  process.env.GOOGLE_REDIRECT_URI,
 );
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -51,14 +51,14 @@ export const registerUser = async (req, res) => {
       microsoftId,
       appleId,
       avatar,
-       client,
+      client,
     } = req.body;
 
     if (client === "desktop") {
-  return res.status(403).json({
-    message: "Sign up is available only on the web version.",
-  });
-}
+      return res.status(403).json({
+        message: "Sign up is available only on the web version.",
+      });
+    }
 
     if (!firstName || !lastName || !email || !organization || !password) {
       return res.status(400).json({
@@ -96,9 +96,10 @@ export const registerUser = async (req, res) => {
       email: email.toLowerCase().trim(),
       organization: organizationDoc._id,
       password: hashedPassword,
-      googleId: googleId || null,
-      microsoftId: microsoftId || null,
-      appleId: appleId || null,
+      ...(googleId ? { googleId } : {}),
+      ...(microsoftId ? { microsoftId } : {}),
+      ...(appleId ? { appleId } : {}),
+      avatar: avatar || "",
       avatar: avatar || "",
       role: "owner",
       roleRef: ownerRole?._id,
@@ -483,7 +484,7 @@ export const forgotPassword = async (req, res) => {
 
     await user.save();
 
-   const resetUrl = `${process.env.FRONTEND_URL}/authenticate/reset-password?token=${resetToken}`;
+    const resetUrl = `${process.env.FRONTEND_URL}/authenticate/reset-password?token=${resetToken}`;
 
     await sendEmail(
       user.email,
@@ -777,7 +778,9 @@ export const googleCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`);
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`,
+    );
   } catch (err) {
     console.error("GOOGLE AUTH ERROR:", err);
 
@@ -915,7 +918,9 @@ export const microsoftCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`);
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`,
+    );
   } catch (err) {
     console.error("MICROSOFT AUTH ERROR:", err);
 
@@ -1071,7 +1076,9 @@ export const appleCallback = async (req, res) => {
       maxAge: 15 * 60 * 1000,
     });
 
-    return res.redirect("`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`");
+    return res.redirect(
+      "`${process.env.FRONTEND_URL}/dashboard/time-tracking/overview`",
+    );
   } catch (err) {
     console.error("APPLE AUTH ERROR:", err);
 
