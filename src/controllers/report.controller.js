@@ -10,6 +10,57 @@ import fs from "fs";
 import path from "path";
 import { Parser } from "json2csv";
 import { getAvatarUrl } from "../utils/avatar.js";
+import { getReportUserIds } from "../utils/reportAccess.js";
+
+const getScopedReportUserQuery = async (
+  req,
+  selectedUsers = [],
+  selectedTeams = [],
+) => {
+  const allowedUserIds = await getReportUserIds(req.user);
+
+  // No report access
+  if (allowedUserIds && allowedUserIds.length === 0) {
+    return null;
+  }
+
+  const userQuery = {
+    organization: req.user.organization,
+  };
+
+  // Restrict to users allowed by reportAccess
+  if (allowedUserIds) {
+    userQuery._id = {
+      $in: allowedUserIds,
+    };
+  }
+
+  // Apply user's selected users without bypassing permissions
+  if (selectedUsers?.length) {
+    if (allowedUserIds) {
+      userQuery._id = {
+        $in: selectedUsers.filter((id) =>
+          allowedUserIds.some(
+            (allowedId) => allowedId.toString() === id.toString(),
+          ),
+        ),
+      };
+    } else {
+      userQuery._id = {
+        $in: selectedUsers,
+      };
+    }
+  }
+
+  // Apply selected teams
+  if (selectedTeams?.length) {
+    userQuery.team = {
+      $in: selectedTeams,
+    };
+  }
+
+  return userQuery;
+};
 
 import {
   generateAttendanceOverviewCSV,
@@ -73,9 +124,19 @@ export const createAttendanceOverviewReport = async (req, res) => {
       endDate,
     });
 
-    const users = await User.find({
-      organization: req.user.organization,
-    });
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
+
+    if (!userQuery) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
+    }
+
+    const users = await User.find(userQuery);
 
     const attendanceData = await Promise.all(
       users.map(async (user) => {
@@ -168,7 +229,10 @@ export const getReports = async (req, res) => {
 
 export const deleteReport = async (req, res) => {
   try {
-    const report = await Report.findById(req.params.id);
+    const report = await Report.findOne({
+      _id: req.params.id,
+      user: req.user._id,
+    });
 
     if (!report) {
       return res.status(404).json({
@@ -214,9 +278,19 @@ export const createAttendanceDetailedReport = async (req, res) => {
       endDate,
     });
 
-    const users = await User.find({
-      organization: req.user.organization,
-    });
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
+
+    if (!userQuery) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
+    }
+
+    const users = await User.find(userQuery);
 
     const rows = [];
 
@@ -331,20 +405,16 @@ export const createUsageReport = async (req, res) => {
       endDate,
     });
 
-    const userQuery = {
-      organization: req.user.organization,
-    };
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
 
-    if (selectedUsers?.length) {
-      userQuery._id = {
-        $in: selectedUsers,
-      };
-    }
-
-    if (selectedTeams?.length) {
-      userQuery.team = {
-        $in: selectedTeams,
-      };
+    if (!userQuery) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
     }
 
     const users = await User.find(userQuery);
@@ -443,34 +513,27 @@ export const createProductivityReport = async (req, res) => {
   try {
     const { startDate, endDate, selectedUsers, selectedTeams } = req.body;
 
-    const report = await Report.create({
-      user: req.user._id,
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
 
-      type: "productivity",
-
-      status: "processing",
-
-      startDate,
-      endDate,
-    });
-
-    const userQuery = {
-      organization: req.user.organization,
-    };
-
-    if (selectedUsers?.length) {
-      userQuery._id = {
-        $in: selectedUsers,
-      };
-    }
-
-    if (selectedTeams?.length) {
-      userQuery.team = {
-        $in: selectedTeams,
-      };
+    if (!userQuery) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
     }
 
     const users = await User.find(userQuery);
+
+    const report = await Report.create({
+      user: req.user._id,
+      type: "productivity",
+      status: "processing",
+      startDate,
+      endDate,
+    });
 
     const csvRows = [];
 
@@ -481,7 +544,7 @@ export const createProductivityReport = async (req, res) => {
     const classificationMap = {};
 
     classifications.forEach((item) => {
-      classificationMap[item.appName] = item.productivity;
+      classificationMap[item.appName.trim().toLowerCase()] = item.productivity;
     });
 
     for (const user of users) {
@@ -503,13 +566,14 @@ export const createProductivityReport = async (req, res) => {
       let unproductiveSeconds = 0;
 
       for (const usage of appUsages) {
-        const productivity = classificationMap[usage.appName] || "neutral";
+        const productivity =
+          classificationMap[usage.appName?.trim().toLowerCase()] || "neutral";
 
         if (productivity === "productive") {
           productiveSeconds += usage.duration;
         } else if (productivity === "unproductive") {
           unproductiveSeconds += usage.duration;
-        } else {
+        } else if (productivity !== "blacklisted") {
           neutralSeconds += usage.duration;
         }
       }
@@ -534,19 +598,12 @@ export const createProductivityReport = async (req, res) => {
 
       csvRows.push({
         name: `${user.firstName} ${user.lastName}`,
-
         productiveTime: formatTime(productiveSeconds),
-
         neutralTime: formatTime(neutralSeconds),
-
         unproductiveTime: formatTime(unproductiveSeconds),
-
         totalTracked: formatTime(totalTracked),
-
         productivePercent: `${productivePercent}%`,
-
         neutralPercent: `${neutralPercent}%`,
-
         unproductivePercent: `${unproductivePercent}%`,
       });
     }
@@ -554,21 +611,19 @@ export const createProductivityReport = async (req, res) => {
     const result = await generateProductivityCSV(report._id, csvRows);
 
     report.status = "done";
-
     report.fileUrl = result.fileUrl;
-
     report.generatedAt = new Date();
 
     await report.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       report,
     });
   } catch (err) {
     console.error(err);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: err.message,
     });
   }
@@ -576,20 +631,22 @@ export const createProductivityReport = async (req, res) => {
 
 export const getProductivityReport = async (req, res) => {
   try {
-    const userQuery = {
-      organization: req.user.organization,
-    };
+    const selectedUsers = req.query.users?.trim()
+      ? req.query.users.split(",").filter(Boolean)
+      : [];
 
-    if (req.query.users?.trim()) {
-      userQuery._id = {
-        $in: req.query.users.split(",").filter(Boolean),
-      };
-    }
+    const selectedTeams = req.query.teams?.trim()
+      ? req.query.teams.split(",").filter(Boolean)
+      : [];
 
-    if (req.query.teams?.trim()) {
-      userQuery.team = {
-        $in: req.query.teams.split(",").filter(Boolean),
-      };
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
+
+    if (!userQuery) {
+      return res.json([]);
     }
 
     const users = await User.find(userQuery).populate("team");
@@ -796,20 +853,16 @@ export const createProjectUserReport = async (req, res) => {
       endDate,
     });
 
-    const userQuery = {
-      organization: req.user.organization,
-    };
+    const userQuery = await getScopedReportUserQuery(
+      req,
+      selectedUsers,
+      selectedTeams,
+    );
 
-    if (selectedUsers?.length) {
-      userQuery._id = {
-        $in: selectedUsers,
-      };
-    }
-
-    if (selectedTeams?.length) {
-      userQuery.team = {
-        $in: selectedTeams,
-      };
+    if (!userQuery) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
     }
 
     const users = await User.find(userQuery).select("_id firstName lastName");
@@ -868,13 +921,27 @@ export const createProjectReport = async (req, res) => {
   try {
     const { startDate, endDate, selectedUsers, selectedTeams } = req.body;
 
-    const report = await Report.create({
-      user: req.user._id,
-      type: "project",
-      status: "processing",
-      startDate,
-      endDate,
-    });
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Report access denied",
+      });
+    }
+
+    let scopedUserIds = null;
+
+    if (selectedUsers?.length) {
+      scopedUserIds = allowedUserIds
+        ? selectedUsers.filter((id) =>
+            allowedUserIds.some(
+              (allowedId) => allowedId.toString() === id.toString(),
+            ),
+          )
+        : selectedUsers;
+    } else if (allowedUserIds) {
+      scopedUserIds = allowedUserIds.map((id) => id.toString());
+    }
 
     const projectQuery = {
       organization: req.user.organization,
@@ -886,9 +953,9 @@ export const createProjectReport = async (req, res) => {
       };
     }
 
-    if (selectedUsers?.length) {
+    if (scopedUserIds) {
       projectQuery.users = {
-        $in: selectedUsers,
+        $in: scopedUserIds,
       };
     }
 
@@ -897,6 +964,14 @@ export const createProjectReport = async (req, res) => {
       "firstName lastName email",
     );
 
+    const report = await Report.create({
+      user: req.user._id,
+      type: "project",
+      status: "processing",
+      startDate,
+      endDate,
+    });
+
     const rows = [];
 
     for (const project of projects) {
@@ -904,9 +979,9 @@ export const createProjectReport = async (req, res) => {
         project: project._id,
       };
 
-      if (selectedUsers?.length) {
+      if (scopedUserIds) {
         trackingQuery.user = {
-          $in: selectedUsers,
+          $in: scopedUserIds,
         };
       }
 
@@ -928,7 +1003,15 @@ export const createProjectReport = async (req, res) => {
         0,
       );
 
-      const users = project.users
+      const visibleUsers = allowedUserIds
+        ? project.users.filter((user) =>
+            allowedUserIds.some(
+              (allowedId) => allowedId.toString() === user._id.toString(),
+            ),
+          )
+        : project.users;
+
+      const users = visibleUsers
         .map((user) => `${user.firstName} ${user.lastName}`)
         .join(", ");
 
