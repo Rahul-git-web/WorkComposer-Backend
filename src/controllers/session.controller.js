@@ -8,6 +8,7 @@ import Activity from "../models/activity.model.js";
 import { getAvatarUrl } from "../utils/avatar.js";
 import { checkSessionOverlap } from "../utils/session.js";
 import { getUserTimezone, getDateRangeUTC } from "../utils/timezone.js";
+import { getReportUserIds } from "../utils/reportAccess.js";
 import Report from "../models/report.model.js";
 import { generateTimeTrackingCSV } from "../services/reportExport.service.js";
 
@@ -430,27 +431,23 @@ export const getOverviewData = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let users = [];
+    const allowedUserIds = await getReportUserIds(req.user);
 
-    if (req.user.role === "owner") {
-      users = await User.find({
-        organization: req.user.organization,
-      }).select("-password");
-    } else if (req.user.role === "admin") {
-      users = await User.find({
-        organization: req.user.organization,
-        role: { $ne: "owner" },
-      }).select("-password");
-    } else if (req.user.role === "manager") {
-      users = await User.find({
-        organization: req.user.organization,
-        team: req.user.team,
-      }).select("-password");
-    } else {
-      users = await User.find({
-        _id: req.user._id,
-      }).select("-password");
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.json([]);
     }
+
+    const userQuery = {
+      organization: req.user.organization,
+    };
+
+    if (allowedUserIds) {
+      userQuery._id = {
+        $in: allowedUserIds,
+      };
+    }
+
+    const users = await User.find(userQuery).select("-password");
 
     const overview = await Promise.all(
       users.map(async (user) => {

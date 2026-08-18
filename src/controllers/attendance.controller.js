@@ -1,6 +1,7 @@
 import Attendance from "../models/attendance.model.js";
 import Session from "../models/session.model.js";
 import User from "../models/user.model.js";
+import { getReportUserIds } from "../utils/reportAccess.js";
 import { getAvatarUrl } from "../utils/avatar.js";
 import {
   getUserTimezone,
@@ -29,9 +30,21 @@ export const getAttendanceData = async (req, res) => {
   try {
     const { startDate, endDate, sortBy = "name", order = "asc" } = req.query;
 
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.json([]);
+    }
+
     const userQuery = {
       organization: req.user.organization,
     };
+
+    if (allowedUserIds) {
+      userQuery._id = {
+        $in: allowedUserIds,
+      };
+    }
 
     if (req.query.users?.trim()) {
       userQuery._id = {
@@ -214,6 +227,17 @@ export const getAttendanceData = async (req, res) => {
 export const getUserAttendanceSummary = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
 
     const user = await User.findById(userId);
 
