@@ -32,7 +32,7 @@ export const getReportUserIds = async (user) => {
       manager: user._id,
     }).select("_id");
 
-    return managedUsers.map((managedUser) => managedUser._id);
+    return [user._id, ...managedUsers.map((managedUser) => managedUser._id)];
   }
 
   // all
