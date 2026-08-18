@@ -29,6 +29,7 @@ import {
   unarchiveUser,
   updateInviteRole,
   updateUser,
+  updateUserDeviceTracking,
   updateUserEmail,
   updateUserRole,
   updateUserSetting,
@@ -121,6 +122,8 @@ router.put("/:id/unarchive", protect, unarchiveUser);
 router.post("/device", protect, registerUserDevice);
 
 router.get("/device/:deviceId/status", protect, checkUserDevice);
+
+router.post("/device/:deviceId/tracking", protect, updateUserDeviceTracking);
 
 router.get("/:id/devices", protect, getUserDevices);
 

@@ -351,6 +351,11 @@ const userSchema = new mongoose.Schema(
           type: Boolean,
           default: false,
         },
+
+        isTracking: {
+          type: Boolean,
+          default: false,
+        },
       },
     ],
 

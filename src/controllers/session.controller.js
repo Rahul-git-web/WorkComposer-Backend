@@ -493,7 +493,9 @@ export const getOverviewData = async (req, res) => {
 
           breakTime: formatTime(breakSeconds),
 
-          status: user.devices?.some((d) => d.isOnline)
+          status: user.devices?.some(
+            (device) => device.isOnline === true && device.isTracking === true,
+          )
             ? "Tracking running"
             : "Tracking stopped",
 

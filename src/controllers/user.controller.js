@@ -1741,6 +1741,51 @@ export const checkUserDevice = async (req, res) => {
   }
 };
 
+export const updateUserDeviceTracking = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { isTracking } = req.body;
+
+    if (typeof isTracking !== "boolean") {
+      return res.status(400).json({
+        message: "isTracking must be a boolean",
+      });
+    }
+
+    const user = await User.findById(req.user._id).select("devices");
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const device = user.devices.find((device) => device.deviceId === deviceId);
+
+    if (!device) {
+      return res.status(404).json({
+        message: "Device not found",
+      });
+    }
+
+    device.isTracking = isTracking;
+    device.lastSync = new Date();
+
+    await user.save();
+
+    return res.json({
+      success: true,
+      isTracking: device.isTracking,
+    });
+  } catch (err) {
+    console.error("UPDATE DEVICE TRACKING ERROR:", err);
+
+    return res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
 // Manager Controller
 export const assignManager = async (req, res) => {
   try {
