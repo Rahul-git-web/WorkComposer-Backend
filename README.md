@@ -4,6 +4,8 @@ Backend API for **WorkComposer**, a workforce productivity and time-tracking pla
 
 ## Tech Stack
 
+### Backend
+
 - Node.js
 - Express 5
 - MongoDB + Mongoose
@@ -16,6 +18,17 @@ Backend API for **WorkComposer**, a workforce productivity and time-tracking pla
 - Axios for external API integrations
 - node-cron for scheduled jobs
 - date-fns / date-fns-tz for date and timezone handling
+
+### Desktop Time Tracking
+
+WorkComposer's desktop time-tracking system uses:
+
+- **C#**
+- **.NET**
+- Windows UI Automation for browser/application interaction
+- Chromium-based browser support for browser time tracking
+
+> The browser time-tracking automation currently supports **Chromium-based browsers**. Non-Chromium browsers are not supported by this automation layer.
 
 ## Main Features
 
@@ -38,6 +51,7 @@ Backend API for **WorkComposer**, a workforce productivity and time-tracking pla
 - Stripe subscriptions and billing
 - Time-tracking and shift settings
 - Real-time Socket.IO communication
+- Desktop time tracking with C#/.NET browser automation for Chromium-based browsers
 
 ## Project Structure
 
@@ -67,6 +81,7 @@ WorkComposer-Backend/
 - Node.js 18+ recommended
 - MongoDB database
 - Environment variables for the services enabled by the application
+- For the desktop browser automation component: Windows with the required **C#/.NET** runtime and a supported Chromium-based browser
 
 ## Installation
 
