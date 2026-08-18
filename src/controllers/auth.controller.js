@@ -123,18 +123,22 @@ export const registerUser = async (req, res) => {
     await user.save();
 
     // Verification Link
-    const verifyUrl = `${process.env.BACKEND_URL}/api/auth/verify/${verificationToken}`;
+    if (!googleId && !microsoftId && !appleId) {
+      const verifyUrl = `${process.env.BACKEND_URL}/api/auth/verify/${verificationToken}`;
 
-    // Send Email
-    const html = verifyEmailTemplate({
-      verifyUrl,
-      firstName: user.firstName,
-    });
+      const html = verifyEmailTemplate({
+        verifyUrl,
+        firstName: user.firstName,
+      });
 
-    await sendEmail(user.email, "Verify your email", html);
+      await sendEmail(user.email, "Verify your email", html);
+    }
 
     res.status(201).json({
-      message: "Registration successful. Please verify your email.",
+      message:
+        googleId || microsoftId || appleId
+          ? "Registration successful."
+          : "Registration successful. Please verify your email.",
     });
   } catch (err) {
     console.error(err);
