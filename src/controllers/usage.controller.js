@@ -4,6 +4,7 @@ import Session from "../models/session.model.js";
 import UsageLog from "../models/usageLog.model.js";
 import AppClassification from "../models/appClassification.model.js";
 import { getAvatarUrl } from "../utils/avatar.js";
+import { getReportUserIds } from "../utils/reportAccess.js";
 import {
   getUserTimezone,
   getDateRangeUTC,
@@ -20,6 +21,24 @@ const formatTime = (seconds) => {
 export const getTopApps = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
     const { date } = req.query;
 
     const usages = await AppUsage.find({
@@ -172,6 +191,18 @@ export const getUsageData = async (req, res) => {
       organization: req.user.organization,
     };
 
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.json([]);
+    }
+
+    if (allowedUserIds) {
+      userQuery._id = {
+        $in: allowedUserIds,
+      };
+    }
+
     if (req.query.users?.trim()) {
       userQuery._id = {
         $in: req.query.users.split(",").filter(Boolean),
@@ -299,6 +330,23 @@ export const getUsageData = async (req, res) => {
 export const getUsageDetails = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
 
     const { startDate, endDate } = req.query;
 

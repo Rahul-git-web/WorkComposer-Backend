@@ -3,10 +3,29 @@ import Screenshot from "../models/screenshot.model.js";
 import Activity from "../models/activity.model.js";
 import UsageLog from "../models/usageLog.model.js";
 import AppClassification from "../models/appClassification.model.js";
+import { getReportUserIds } from "../utils/reportAccess.js";
 
 export const getActivity = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
     const { date } = req.query;
 
     const startDate = new Date(date);
@@ -80,7 +99,6 @@ export const getActivity = async (req, res) => {
       }
     }
 
-
     const activeBuckets = activity.filter((item) => item.value > 0);
 
     const averageScore =
@@ -97,7 +115,7 @@ export const getActivity = async (req, res) => {
       idleTime,
     });
   } catch (err) {
-   console.error(err);
+    console.error(err);
 
     res.status(500).json({
       error: err.message,
@@ -108,6 +126,23 @@ export const getActivity = async (req, res) => {
 export const getActivityTimeline = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
 
     const { startDate, endDate } = req.query;
 
@@ -239,6 +274,23 @@ export const getSessionDetails = async (req, res) => {
     if (!userId || !startTime || !endTime) {
       return res.status(400).json({
         message: "Missing required params",
+      });
+    }
+
+    const allowedUserIds = await getReportUserIds(req.user);
+
+    if (allowedUserIds && allowedUserIds.length === 0) {
+      return res.status(403).json({
+        message: "Permission denied",
+      });
+    }
+
+    if (
+      allowedUserIds &&
+      !allowedUserIds.some((id) => id.toString() === userId.toString())
+    ) {
+      return res.status(403).json({
+        message: "Permission denied",
       });
     }
 
@@ -398,7 +450,7 @@ export const getSessionDetails = async (req, res) => {
       workTime,
     });
   } catch (err) {
-   console.error(err);
+    console.error(err);
 
     res.status(500).json({
       message: err.message,
